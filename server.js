@@ -29,6 +29,7 @@ const PORT = process.env.PORT || 8080;
 const allowedOrigins = [
   "http://localhost:3000",
   "https://avenir-kohl.vercel.app",
+  "https://avenirbackend.onrender.com"
 ];
 
 app.use(
