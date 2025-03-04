@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 8080;
 const allowedOrigins = [
   "http://localhost:3000",
   "https://avenir-kohl.vercel.app",
-  "https://avenirbackend.onrender.com"
+  "https://avenirbackend.onrender.com",
 ];
 
 app.use(
@@ -589,31 +589,41 @@ app.post("/chat", async (req, res) => {
     // ======================================================
     const firstPrompt = `
 You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
+I have an extremely important task for you which needs to be in-depth, specific, and actionable. 
 You MUST read the entire prompt and follow the instructions with great precision.
 
 I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}.
 I have asked you this question: "${message}".
 
-First, determine what type of question is being asked to find out the best way to respond. 
+You have 2 tasks:
 
-Here are the possible question types (select exactly ONE):
+1. Restate the question and the user's goal in 1 sentence. Return this as "goalSentence".
+2. Determine the question type using the categories below. Return exactly ONE letter (a-k, y, or z) under the key "questionType".
+
+Possible question types:
 a) Vendor question
 b) RFP question
 c) Cost savings estimation
-d) Write an email
+d) Write an email / create an email campaign
 e) Make a survey
-f) Executive summary
+f) Write a communication / proposal / paper / executive summary
 g) Create a risk profile
 h) Evaluating a point solution
 i) Give me background info / Understanding benefits trends / bigger picture / other data from external public data
 j) Give me company info / Understanding trends/claims costs/ other data about my internal company data
 k) Suggest actions / what can I do about this issue?
 y) The question could be about either my company or public data (a-k)
-z) The question doesn’t make sense or it’s off topic
+z) The question is gibberish, doesn’t make sense or it’s off topic
 
-ONLY RETURN ONE LETTER (a-j, k, or z) with no other text or explanation.
-    `.trim();
+Return your response in **structured JSON format**, exactly like this:
+
+{
+  "goalSentence": "Your single-sentence restatement of the question here.",
+  "questionType": "a"
+}
+
+Make sure the JSON is valid and contains exactly these two keys.
+`.trim();
 
     const classificationResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -623,7 +633,7 @@ ONLY RETURN ONE LETTER (a-j, k, or z) with no other text or explanation.
           { role: "system", content: "You are a helpful assistant." },
           { role: "user", content: firstPrompt },
         ],
-        max_tokens: 50,
+        max_tokens: 100,
       },
       {
         headers: {
@@ -633,10 +643,25 @@ ONLY RETURN ONE LETTER (a-j, k, or z) with no other text or explanation.
       }
     );
 
-    let questionType =
-      classificationResponse.data.choices[0]?.message?.content.trim() || "j";
+    let responseText =
+      classificationResponse.data.choices[0]?.message?.content.trim() || "{}";
 
-    questionType = questionType.toLowerCase().replace(/[^a-jk]/g, "") || "j";
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch (error) {
+      console.error("Error parsing JSON response:", error);
+      parsedResponse = {
+        goalSentence: "Could not parse response.",
+        questionType: "j",
+      };
+    }
+
+    let goalSentence = parsedResponse.goalSentence || "Unknown goal.";
+    let questionType =
+      parsedResponse.questionType?.toLowerCase().replace(/[^a-jk]/g, "") || "j";
+
+    console.log("Goal Sentence:", goalSentence);
     console.log("Question Type:", questionType);
 
     // =====================================================================================
@@ -728,11 +753,6 @@ ONLY RETURN ONE LETTER (a-j, k, or z) with no other text or explanation.
 
     const secondPrompts = {
       a: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Use the public/web data (attached below) to suggest 3 point solution vendors to target the issues stated above 
 IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses. Do not make up factual information, do not hallucinate. 
@@ -741,11 +761,6 @@ In a table, evaluate the vendors by name (with a clickable href URL to their web
 
       `,
       b: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Generate a Request for Proposals (RFP) to get more point solutions 
 which includes the following sections: 
@@ -753,76 +768,60 @@ which includes the following sections:
 
       `,
       c: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Use scientific, mathematical, and financial equations to state the quantifiable, specific, 
 numerical breakdown of cost savings and ROI estimation with justifications that reflects the situation above.
 
       `,
       d: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Write a highly personalized email that’s professional and concise which responds to the situation above.
 
       `,
       e: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Generate a valid HTML survey which addresses the situation above 
 (valid in the sense that checkboxes should be clickable, input forms should be real text input, etc.).
 
       `,
       f: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
-Generate a detailed executive summary for my manager that reflects the situation above.
-Company Overview – Provides a brief summary of the organization's size, industry, workforce demographics, and key business objectives related to employee benefits.
-Current Benefits Landscape – Outlines the structure of existing benefits programs, including health plans, wellness initiatives, and voluntary benefits.
-Key Findings & Insights – Summarizes major trends, challenges, and opportunities identified from benefits data and employee feedback.
-Claims Cost Analysis – Breaks down healthcare claims data to highlight cost drivers, high-risk areas, and emerging expense trends.
-Employee Engagement & Utilization Trends – Examines participation rates, program adoption, and employee satisfaction with benefits offerings.
-Compliance & Regulatory Considerations – Identifies potential compliance risks, upcoming regulatory changes, and legal obligations affecting benefits programs.
-Benchmarking Against Industry Standards – Compares the company’s benefits offerings, costs, and engagement metrics against competitors and industry benchmarks.
-Opportunities for Cost Savings & Efficiency – Highlights specific areas where costs can be reduced through plan adjustments, vendor optimizations, or targeted interventions.
-Recommendations & Strategic Action Plan – Provides actionable strategies to enhance benefits effectiveness, control costs, and improve employee well-being.
-Next Steps & Implementation Timeline – Defines the key actions, responsible stakeholders, and projected timeline for executing benefits improvements.
+          Generate a detailed communication that serves the goal of the situation above.
+
+          You can leverage these sources as needed:
+          1. state/federal public health data
+          2. legislation/regulatory data
+          3. benefits trends
+          4. bureau of labor statistics
+
+          You could choose to include, as needed:
+          Opportunities for Cost Savings & Efficiency
+          Recommendations
+          Next Steps & Implementation Timeline
 
       `,
       g: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
-Come up with a Risk profile workflow based on the provided company size (${employeeCount} employees) 
-and areas of operation (${locations}) that is able to predict and forecast clinical risk. 
+        Come up with a Risk profile workflow based on the provided company size (${employeeCount} employees) 
+        and areas of operation (${locations}) that is able to predict and forecast clinical risk. 
 
-Come up with a Risk profile workflow based on the provided company size (${employeeCount} employees) and areas of operation (${locations}) that is able to predict and forecast clinical risk which ONLY includes sections on these following parts: (1) Persona analysis - segment employees into different named groups based on age, tenure, generation (different groups have different needs) and state the percentage of employees belonging to each group (2) SDOH - Segment employees further based on their states/geographic areas, and specifically identify the SPECIFIC risks for each state in the Deprivation index: Income, Employment, Education, Housing, Health, Access to Services, Crime (3) Perform a Clinical risk forecast for each group (4) Suggested Benefits targeting - recommend specific benefits within that population (5) KPIs - identify which success metrics we can use to monitor 
+        First, Search these sources to gather evidence to build the risk profiles.
+          1. state/federal public health data
+          2. legislation/regulatory data
+          3. benefits trends
+          4. bureau of labor statistics
+          5. Industry benchmark data
+          
+        Next Come up with a Risk profile workflow based on the provided company size (${employeeCount} employees) and areas of operation (${locations}) that is able to predict and forecast clinical risk which includes sections on these following parts: 
+        (1) Persona analysis - segment employees into different named groups based on age, tenure, generation (different groups have different needs) and state the percentage of employees belonging to each group 
+        (2) SDOH - Segment employees further based on their states/geographic areas, and specifically identify the SPECIFIC risks for each state in the Deprivation index: Income, Employment, Education, Housing, Health, Access to Services, Crime 
+        (3) Perform a Clinical risk forecast for each group 
+        (4) Hypotheses
+        (5) Suggested Benefits targeting - recommend specific benefits within that population 
+        (6) KPIs - identify which success metrics we can use to monitor 
 
 `,
       h: `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision. 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-and I have asked you this question: "${message}”.
 
 Construct a structured point solution evaluation report as follows (PLEASE ONLY INCLUDE THESE FOLLOWING SECTIONS):
 
@@ -841,24 +840,23 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       `,
       i: `
-You are an expert in Employee Benefits and public health. I have an extremely important task for you which needs to be in-depth, specific and actionable. You MUST read the entire prompt and follow the instructions with great precision. I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, and I have asked you this question: "${message}”.
+          Part 1: Search these sources to answer my question:
+          1. state/federal public health data
+          2. legislation/regulatory data
+          3. benefits trends
+          4. bureau of labor statistics
+          5. What are similar companies to me doing successfully? (anonymize the names for confidentiality)
+          
+          Part 2: Cross reference my company's internal medical spend trends/data with external data findings to find correlations and surprisingly nuanced insights. USE MY INTERNAL COMPANY DATA! SPECIFICALLY REFERENCE IT.
 
-Respond in a structured way as follows. IMPORTANT: INCLUDE ALL SECTIONS LISTED BELOW
+          Part 3: Hypotheses
 
-Public Trends: Tell me what is going on from the perspective of public data. 
-1. state/federal public health data
-2. legislation/regulatory data
-3. benefits trends
-4. bureau of labor statistics
-5. Cross reference company internal medical spend trends/data with external data to find correlations and surprisingly nuanced insights
-6. Ask the user if theyd like to know what actions they can take
+          Focus on SPECIFIC, NUMERICAL, quantitative, statistical insights. Source information from a variety of REAL sources, especially government, corporate, and health sites (ie: NIH, SHRM, BOL... etc). DO NOT MAKE UP FACTUAL INFORMATION!
 
-Focus on SPECIFIC, NUMERICAL, quantitative, statistical insights. Source information from a variety of REAL sources, especially government, corporate, and health sites (ie: NIH, SHRM, BOL... etc). DO NOT MAKE UP FACTUAL INFORMATION!
 
-It is important that you provide 10+ bullet points of information, and focus on the most helpful, specific, nuanced, intellectual insights. 
+          It is important that you provide 10+ bullet points of information, and focus on the most helpful, specific, nuanced, intellectual insights. 
       `,
       j: `
-      You are an expert in Employee Benefits and public health. I have an extremely important task for you which needs to be in-depth, specific and actionable. You MUST read the entire prompt and follow the instructions with great precision. I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, and I have asked you this question: "${message}”.
       
       Respond in a structured way as follows.
       
@@ -877,7 +875,6 @@ It is important that you provide 10+ bullet points of information, and focus on 
 
             `,
       k: `
-      You are an expert in Employee Benefits and public health. I have an extremely important task for you which needs to be in-depth, specific and actionable. You MUST read the entire prompt and follow the instructions with great precision. I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, and I have asked you this question: "${message}”.
       
       Respond in a structured way as follows.
       
@@ -889,21 +886,11 @@ It is important that you provide 10+ bullet points of information, and focus on 
 
             `,
       y: `
-            You are an expert in Employee Benefits and public health. 
-            I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-            You MUST read the entire prompt and follow the instructions with great precision. 
-            I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-            and I have asked you this question: "${message}”.
       
             This question seems not to specify whether the question is about my company or about external context.
             Please ask the user for clarify whether they want the question to be answered for the company data or external, to start.
             `,
       z: `
-      You are an expert in Employee Benefits and public health. 
-      I have an extremely important task for you which needs to be in-depth, specific and actionable. 
-      You MUST read the entire prompt and follow the instructions with great precision. 
-      I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}, 
-      and I have asked you this question: "${message}”.
 
       This question doesn’t make sense or is off topic. 
       Please ask the user for clarification.
@@ -923,7 +910,7 @@ It is important that you provide 10+ bullet points of information, and focus on 
     IMPORTANT! DO NOT MAKE UP FACTUAL INFORMATION! ONLY PROVIDE REAL SOURCES FROM ACTUAL WEBSITES WITH ACCURATE VALID INFORMATION.
     IMPORTANT! For the response body (not the follow up questions) Provide your answer in valid HTML Markdown syntax only, no asterisks no ***!! Only use valid <HTML> tags
     IMPORTANT! Incorporate FontAwesome icons to structure your response in a nicely visually appealing way.
-    IMPORTANT! Make your response aesthetically appealing by adding colored text, highlights, etc.
+    IMPORTANT! Make your response aesthetically appealing by adding colored text, highlights, structuring sections into HTML cards, padding between elements (especially tables), USE FONTAWESOME ICONS!! <i className="fa fa-home"></i>.
     IMPORTANT! Do not produce extra commentary beyond the instructions. No weird HTML explanations or CTAs after the answer!!!!!!
 
     Here’s what we’ve said in previous conversations, for context:
@@ -932,6 +919,12 @@ ${historyPrompt}
 
     // Build Final Prompt (Same as before)
     const finalSecondPrompt = `
+    You are an expert in Employee Benefits and public health. 
+    I have an extremely important task for you that determines the future of our careers.
+    I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}.
+    I have asked you this question: "${message}”.
+    My goal is: "${goalSentence}".
+
       ${secondPromptBody}
       ${secondPromptFooter}
 
@@ -946,6 +939,8 @@ ${historyPrompt}
       \`\`\`json
       { "followUps": ["Follow-up question 1?", "Follow-up question 2?"] }
       \`\`\`
+
+      DO NOT USE OTHER FORMATS LIKE "console.log JSON stringify"
     `.trim();
 
     // Make the final GPT call
