@@ -571,7 +571,7 @@ async function performRAGQuery(query) {
     const index = await pinecone.index("benefits-documents");
     const result = await index.query({
       vector: await getOpenAIEmbedding(query),
-      topK: 10,
+      topK: 5,
       includeMetadata: true,
     });
 
