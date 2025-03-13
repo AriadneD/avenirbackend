@@ -6,6 +6,4 @@ const pinecone = new Pinecone({
   //controllerHostUrl: `https://${process.env.PINECONE_ENVIRONMENT}-db.pinecone.io`,
 });
 
-console.log("Pinecone API Key:", process.env.PINECONE_API_KEY);
-
 module.exports = pinecone;

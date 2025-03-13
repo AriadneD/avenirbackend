@@ -571,7 +571,7 @@ async function performRAGQuery(query) {
     const index = await pinecone.index("benefits-documents");
     const result = await index.query({
       vector: await getOpenAIEmbedding(query),
-      topK: 5,
+      topK: 10,
       includeMetadata: true,
     });
 
@@ -624,9 +624,8 @@ app.post("/chat", async (req, res) => {
     // ============================================================
     // STEP 1: GATHER CONTEXT (USER DOCS + EXTERNAL DATA)
     // ============================================================
-    const { companyName, employeeCount, locations, industry } = await getCompanyInfo(
-      userId
-    );
+    const { companyName, employeeCount, locations, industry } =
+      await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
     // (A) Get user docs + build a quick chatHistory prompt if needed
     const allDocs = await getAllDocuments(userId); // returns array of {name, tag}
@@ -703,8 +702,6 @@ app.post("/chat", async (req, res) => {
       };
     }
 
-    console.log(parsedFirst);
-
     // =====================================================
     // STEP 3: GATHER RELEVANT EVIDENCE
     // =====================================================
@@ -739,7 +736,7 @@ app.post("/chat", async (req, res) => {
       a: `
 
           Use the public/web data (attached below) to suggest 3 point solution vendors to target the issues stated above 
-          IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses. Do not make up factual information, do not hallucinate. 
+          IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses, with REAL website URLS you can click. Do not make up factual information, do not hallucinate. 
           Give extremely specific expert vendors tailored to the circumstance.). 
           In a table, evaluate the vendors by name (with a clickable href URL to their website), features, cost, engagement, NPS, user feedback, integration.
           After the table, create a matrix of categories to score the vendors, then assign a final score with justification, and highlight the top vendor.
@@ -915,36 +912,99 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>.
       - Do not include the characters \
       - Use FontAwesome icons for visual structuring.
-      - Apply color styling with #007bff and #6a11cb.
-      - Structure response into HTML cards with proper padding.
+      - Apply color styling with #007bff and #6a11cb (remember to use white text if you use a colored background).
+      - Structure response into HTML cards with proper padding and mobile-responsive design.
 
       Evidence:
       ${compiledEvidence}
        ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
-      IMPORTANT: At the very end of your response, generate **exactly two follow-up questions** that the user can ask next in JSON format:
-      { "followUps": ["Question1?", "Question2?"] }
+      At the very end of your response, generate **exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
+
+      IMPORTANT: Your follow up questions **must only** contain valid JSON. Do not include any other text, explanations, or symbols.
+
+      Return the follow-up questions using the **EXACT JSON format** below, without adding any markdown, extra characters, or explanation:
+      STRICT RULES:
+
+      Only return JSON. No preamble, no text before or after.
+      Ensure the JSON is syntactically correct and valid.
+      Do not insert Markdown formatting in the actual response.
+      Do not change the JSON structure.
+      Failure to follow this format will result in an invalid response.
+      
+      json
+      { "followUps": ["Follow-up question 1?", "Follow-up question 2?"] }
+      
+
+      Do not use any other formats, characters, or symbols.
+
     `.trim();
 
-    const finalResponse = await callOpenAI(secondPrompt, 2000);
+    const finalResponse = await callOpenAI(secondPrompt, 2500);
     let botReply = finalResponse.replace(/```html/g, "").replace(/```/g, "");
-
+    console.log(finalResponse);
+    console.log(botReply);
     let followUps = [];
-    const followUpMatch = botReply.match(
-      /\{[\s\S]*?"followUps":\s*\[[\s\S]*?\]\s*\}/
-    );
-    if (followUpMatch) {
+    const lastOpenBrace = botReply.lastIndexOf("{");
+    const lastCloseBrace = botReply.lastIndexOf("}");
+
+    if (
+      lastOpenBrace !== -1 &&
+      lastCloseBrace !== -1 &&
+      lastOpenBrace < lastCloseBrace
+    ) {
       try {
-        followUps = JSON.parse(followUpMatch[0]).followUps || [];
-        botReply = botReply.replace(followUpMatch[0], "").trim();
+        // Extract potential JSON part
+        const jsonPart = botReply
+          .slice(lastOpenBrace, lastCloseBrace + 1)
+          .trim();
+
+        // Parse it as JSON
+        const parsedJson = JSON.parse(jsonPart);
+
+        // Assign follow-ups if available
+        followUps = parsedJson.followUps || [];
+
+        // Remove the matched JSON string from botReply
+        botReply = botReply.slice(0, lastOpenBrace).trim();
       } catch (err) {
         console.error("Error parsing follow-ups:", err);
       }
     }
 
+    console.log(followUps);
+
+    // =====================================================
+    // STEP 4: SUMMARIZE THE EVIDENCE (NEW STEP)
+    // =====================================================
+    const summaryPrompt = `
+      Summarize the following content in the style of a benefits consultant in employee benefits & public health.
+      Use a formal, structured, and precise tone, suitable for inclusion in a research paper.
+      Include quantitative (numerical, statistical) insights as well as qualitative ones.
+      Be as specific as possible.
+      At the beginning of the response, explain what this evidence summary is for, in first person ("I used [sources] to provide deep research to gather evidence to answer your question").
+      At the beginning of each point, use a short phrase as the "title" of that point (on the same line, separated by a colon), so it's easier to read.
+      At the end, include the list of the names of the article sources in valid citation format.
+      Do not return any extra commentary or conclusion.
+
+      External/Public Data:
+      ${ragData}
+      
+      Documents from My Company:
+      ${docSummaries}
+
+      Summarized Insights (Return in PLAIN TEXT, no bold font, bullet points only):
+    `.trim();
+
+    const summarizedResponse = await callOpenAI(summaryPrompt, 1000);
+    const summarizedCompiledEvidence = summarizedResponse
+      .replace(/```/g, "")
+      .trim();
+
     return res.json({
       questionType: parsedFirst.questionType,
       reply: botReply,
+      evidence: summarizedCompiledEvidence, // Include compiled evidence separately
       followUps,
     });
   } catch (error) {
