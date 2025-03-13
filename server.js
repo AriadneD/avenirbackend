@@ -10,6 +10,7 @@ const Papa = require("papaparse");
 const { db } = require("./firebase");
 const fs = require("fs");
 const path = require("path");
+
 const {
   collection,
   getDocs,
@@ -286,16 +287,51 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
           { role: "system", content: "You are a helpful assistant." },
           {
             role: "user",
-            content: `You are an expert in employee benefits and data analytics. Your task is to summarize this uploaded document:
+            content: `
+            You are an expert in employee benefits and data analytics. 
+            Your task is to concisely summarize the uploaded document and provide a one-sentence tag.
 
-            - If it is a table, preserve all columns and, for quantitative values, state the average, max, and min values for each column. If the value is monthly/yearly/seasonaly, state how the change progressed over that period of time, including the min month, max month, average month. If the value varies by a qualitative value, ie by gender or by state, preserve those columns individually with the min, max, avg. For qualitative values, give the percentages of each value. 
-            - If it is a document, summarize as usual, focusing on key insights
+            The summary should be written in Valid HTML markdown 
+            
+            
 
-            IMPORTANT: Provide your answer in valid HTML markdown syntax!!!
-            Text to summarize:\n\n${extractedText}`,
+            First, determine the type of document. 
+            If it is a regular document, just summarize it normally. 
+
+            But if it is a table, focus on key quantitative trends & insights in the data.
+            It should be broken down into sections.
+            
+            Use this type of format:
+            Make an HTML table with
+            Total number of value per category
+            Mean, max, and min value for each column
+            Category wise breakdown if there are significant differences
+
+            After the table, provide 20 detailed, specific bullet point key findings that cover, such as:
+            What is most common?
+            What is most expensive/highest?
+            Where do values vary the most?
+            Any category level variations?
+            Outliers or notable trends?
+
+            Note: State based trends, and other social determinants of health factors are really important!! Include as many as you can.
+
+            For the Tag:
+
+            Provide a concise but detailed one-sentence description of the file.
+            Use a precise string format, making it clear what the file contains.
+
+
+            Text to analyze:\n\n${extractedText}
+            
+            IMPORTANT: Give your overall response in JSON format. no extra text, no "console.log json stringify", no incomplete unterminated JSON.
+            {
+              "summary": "<Summary here (HTML inside the JSON)>",
+              "tag": "<Categorization in one sentence>"
+            }`,
           },
         ],
-        max_tokens: 2000,
+        max_tokens: 2500,
       },
       {
         headers: {
@@ -305,17 +341,107 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
       }
     );
 
-    let summary = response.data.choices[0]?.message?.content?.trim();
+    let responseText = response.data.choices[0]?.message?.content?.trim();
 
-    // Step 6: Remove the literal "```html" and "```" from the response
-    summary = summary.replace(/```html/g, "").replace(/```/g, "");
+    console.log(responseText);
 
-    res.status(200).json({ summary });
+    // ✅ Remove invalid backticks (` ```json ... ``` `) if they exist
+    responseText = responseText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    // ✅ Parse the cleaned JSON response
+    const { summary, tag } = JSON.parse(responseText);
+    res.status(200).json({ summary, tag });
   } catch (error) {
     console.error("Error processing file:", error);
     res.status(500).json({ error: "Failed to process file" });
   }
 });
+
+//New Helper Functions for Getting Documents
+const getAllDocuments = async (userId) => {
+  try {
+    const userDocsRef = db.collection(`users/${userId}/documents`);
+    const snapshot = await userDocsRef.get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+
+    return snapshot.docs.map((doc) => ({
+      name: doc.data().name,
+      tag: doc.data().tag,
+    }));
+  } catch (error) {
+    console.error("Error fetching documents:", error);
+    throw new Error("Failed to fetch user-uploaded documents.");
+  }
+};
+
+// Likewise, replace getDocumentByTag with the same style:
+
+const getDocumentByTag = async (userId, tag) => {
+  try {
+    const userDocsRef = db.collection(`users/${userId}/documents`);
+    const snapshot = await userDocsRef.get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    // find doc whose 'tag' field matches
+    const matchedDoc = snapshot.docs.find((doc) => doc.data().tag === tag);
+    return matchedDoc
+      ? {
+          name: matchedDoc.data().name,
+          summary: matchedDoc.data().summary,
+        }
+      : null;
+  } catch (error) {
+    console.error("Error fetching document by tag:", error);
+    throw new Error("Failed to fetch document by tag.");
+  }
+};
+
+// Helper function to get user-uploaded documents from Firestore
+const getUserUploadedDocuments = async (userId) => {
+  try {
+    const userDocsRef = db.collection(`users/${userId}/documents`);
+    const snapshot = await userDocsRef.get();
+
+    if (snapshot.empty) {
+      return "No uploaded documents found.";
+    }
+
+    let documents = "";
+    snapshot.forEach((doc) => {
+      const { name, summary } = doc.data();
+      documents += `\n---\n${name}: ${summary}`;
+    });
+
+    return documents;
+  } catch (error) {
+    console.error("Error fetching user documents:", error);
+    throw new Error("Failed to fetch user-uploaded documents.");
+  }
+};
+
+// Helper function to query Google Custom Search API
+const queryGoogleSearch = async (query) => {
+  const response = await axios.get(
+    `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(
+      query
+    )}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`
+  );
+
+  return response.data.items
+    ? response.data.items
+        .map((item) => `${item.title}: ${item.snippet}`)
+        .join("\n")
+    : "No relevant results found.";
+};
 
 // Helper function to dynamically load relevant domain files
 const getRelevantDomainFiles = (message) => {
@@ -363,44 +489,6 @@ const readDomainExpertiseFiles = () => {
   });
 
   return content;
-};
-
-// Helper function to get user-uploaded documents from Firestore
-const getUserUploadedDocuments = async (userId) => {
-  try {
-    const userDocsRef = db.collection(`users/${userId}/documents`);
-    const snapshot = await userDocsRef.get();
-
-    if (snapshot.empty) {
-      return "No uploaded documents found.";
-    }
-
-    let documents = "";
-    snapshot.forEach((doc) => {
-      const { name, summary } = doc.data();
-      documents += `\n---\n${name}: ${summary}`;
-    });
-
-    return documents;
-  } catch (error) {
-    console.error("Error fetching user documents:", error);
-    throw new Error("Failed to fetch user-uploaded documents.");
-  }
-};
-
-// Helper function to query Google Custom Search API
-const queryGoogleSearch = async (query) => {
-  const response = await axios.get(
-    `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(
-      query
-    )}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`
-  );
-
-  return response.data.items
-    ? response.data.items
-        .map((item) => `${item.title}: ${item.snippet}`)
-        .join("\n")
-    : "No relevant results found.";
 };
 
 // Helper function to query BLS API
@@ -470,6 +558,7 @@ const getCompanyInfo = async (userId) => {
       companyName: companyData.companyName || "Unknown Company",
       employeeCount: companyData.employeeCount || "Unknown Employee Count",
       locations: companyData.locations || [],
+      industry: companyData.industry || "Unknown Industry",
     };
   } catch (error) {
     console.error("Error fetching company info:", error);
@@ -516,7 +605,51 @@ async function callOpenAI(prompt, maxTokens = 500) {
   return openaiResponse.data.choices[0]?.message?.content || "No response";
 }
 
+// NOTE: The rest of your server code (endpoints, helper functions, etc.) remains unchanged.
+//       Only the /chat route is replaced with this new version below.
+
 // POST /chat route
+
+const { ChatOpenAI } = require("@langchain/openai");
+const { BufferMemory } = require("langchain/memory");
+const { HumanMessage, SystemMessage } = require("@langchain/core/messages");
+
+// Create a ChatOpenAI model instance
+// Use whichever model name you need
+const chatModel = new ChatOpenAI({
+  openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
+  modelName: "gpt-4o-mini",
+  temperature: 0,
+});
+
+// Set up memory for the conversation
+// This keeps track of prior exchanges
+const chatMemory = new BufferMemory({
+  returnMessages: true,
+  memoryKey: "history",
+});
+
+// Helper: single call to the chat model with memory
+async function callLangChain(prompt) {
+  // Our prompt is appended to the conversation memory behind the scenes
+  // You can add a SystemMessage here or do so inside the route
+  const response = await chatModel.call(
+    [
+      new SystemMessage("You are a helpful assistant."),
+      new HumanMessage(prompt),
+    ],
+    {
+      // Supply memory so it can update its internal state
+      // If you want each call to be separate from the conversation, omit memory
+      memory: chatMemory,
+    }
+  );
+  return response.text;
+}
+
+// ---------------------------------------------
+// REFRESHED /chat route using LangChain
+// ---------------------------------------------
 app.post("/chat", async (req, res) => {
   try {
     // ---------------------------
@@ -529,259 +662,150 @@ app.post("/chat", async (req, res) => {
     }
 
     // ============================================================
-    // STEP 1: GATHER CONTEXT (NOT RAG)
+    // STEP 1: GATHER CONTEXT (USER DOCS + EXTERNAL DATA)
     // ============================================================
-    const { companyName, employeeCount, locations } = await getCompanyInfo(
+    const { companyName, employeeCount, locations, industry } = await getCompanyInfo(
       userId
     );
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
-
-    //idk if this will work
-    const allDocs = await getUserUploadedDocuments(userId);
+    // (A) Get user docs + build a quick chatHistory prompt if needed
+    const allDocs = await getAllDocuments(userId); // returns array of {name, tag}
 
     let googleResults = "";
     if (useWebSearch) {
       googleResults = await queryGoogleSearch(message);
     }
-
     const blsData = await queryBLS();
 
-    // ======================================================
-    // STEP 2: BUILD CHAT HISTORY
-    // ======================================================
-    const maxTokens = 3000; // or whichever limit
-    let chatHistoryTokens = 0;
-
-    const historyPrompt = chatHistory
-      .reverse()
-      .map((msg) => {
-        const tokenEstimate = msg.content.length / 4; // approximate token estimate
-        if (chatHistoryTokens + tokenEstimate < maxTokens) {
-          chatHistoryTokens += tokenEstimate;
-          return `${msg.role === "user" ? "User" : "Assistant"}: ${
-            msg.content
-          }`;
-        }
-        return null;
-      })
-      .filter(Boolean)
-      .reverse()
+    // Build document listing for evidence gathering
+    const docListing = allDocs.map((d) => `${d.name} (${d.tag})`).join("\n");
+    const shortHistory = chatHistory
+      .filter((m) => m.role === "user")
+      .slice(-10)
+      .map((m) => `User: ${m.content}`)
       .join("\n");
 
-    // Construct user only history (for first prompt)
-    const promptHistory = chatHistory
-      .reverse() // Start from the most recent message
-      .filter((msg) => msg.role === "user") // Keep only user messages
-      .map((msg) => {
-        const tokenEstimate = msg.content.length / 4; // Approximate token estimate
-        if (chatHistoryTokens + tokenEstimate < maxTokens) {
-          chatHistoryTokens += tokenEstimate;
-          return `User: ${msg.content}`; // Format user messages
-        }
-        return null; // Skip messages if over token limit
-      })
-      .filter(Boolean) // Remove skipped messages (null values)
-      .reverse() // Restore original order
-      .join("\n"); // Join messages into a single formatted string
-
-    // ======================================================
-    // STEP 3: FIGURE OUT THE USER'S GOAL (CLASSIFY QUESTION)
-    // ======================================================
+    // =====================================================
+    // STEP 2: CLASSIFY THE USER'S GOAL & RELEVANT DATA NEEDS
+    // =====================================================
     const firstPrompt = `
-You are an expert in Employee Benefits and public health. 
-I have an extremely important task for you which needs to be in-depth, specific, and actionable. 
-You MUST read the entire prompt and follow the instructions with great precision.
+      You are an expert in Employee Benefits and public health. 
+      I have an extremely important task for you which needs to be in-depth, specific, and actionable. 
+      You MUST read the entire prompt and follow the instructions with great precision.
 
-I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}.
-I have asked you this question: "${message}".
+      I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      I have asked you this question: "${message}".
 
-You have 2 tasks:
+      Your tasks:
+      1. From your analysis of the question, state the user's goal in 1 sentence. Return this as "goalSentence".
+      2. Determine the question type using predefined categories. Return exactly ONE letter (a-k, y, or z) under the key "questionType".
+            Possible question types:
+            a) Vendor question
+            b) RFP question
+            c) Cost savings estimation
+            d) Write an email / create an email campaign
+            e) Make a survey
+            f) Write a communication / proposal / paper / executive summary
+            g) Create a risk profile
+            h) Evaluating a point solution
+            i) Give me background info / Understanding benefits trends / bigger picture / other data from external public data
+            j) Give me company info / Understanding trends/claims costs/ other data about my internal company data
+            k) Suggest actions / what can I do about this issue?
+            l) industry benchmarking / what are other companies similar to me doing? 
+            m) compliance question / are we compliant / understanding compliance / understanding terminology that relates to compliance / laws
+            y) The question could be about either my company or public data (a-k)
+            z) The question is gibberish, doesn’t make sense or it’s off topic
+      3. Based on the intent of the question, List 1-3 search terms we should use to query our external database of public information. Or, if you feel that you don't need external data to answer the question, leave it blank.
+      4. Based on the intent of the question, From the list of My Company Documents, List ALL of the relevant user documents that could possibly contain information relevant to the question. This is EXTREMELY important, be broad. Return their tag, which is the sentence written in parentheses () after the name. For example ${allDocs[0].tag}
 
-1. Restate the question and the user's goal in 1 sentence. Return this as "goalSentence".
-2. Determine the question type using the categories below. Return exactly ONE letter (a-k, y, or z) under the key "questionType".
+      My company documents:
+      ${docListing}
 
-Possible question types:
-a) Vendor question
-b) RFP question
-c) Cost savings estimation
-d) Write an email / create an email campaign
-e) Make a survey
-f) Write a communication / proposal / paper / executive summary
-g) Create a risk profile
-h) Evaluating a point solution
-i) Give me background info / Understanding benefits trends / bigger picture / other data from external public data
-j) Give me company info / Understanding trends/claims costs/ other data about my internal company data
-k) Suggest actions / what can I do about this issue?
-y) The question could be about either my company or public data (a-k)
-z) The question is gibberish, doesn’t make sense or it’s off topic
-
-Return your response in **structured JSON format**, exactly like this:
-
-{
-  "goalSentence": "Your single-sentence restatement of the question here.",
-  "questionType": "a"
-}
-
-Make sure the JSON is valid and contains exactly these two keys.
-`.trim();
-
-    const classificationResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
+      Return a JSON response EXACTLY like this, no other formats:
       {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: firstPrompt },
-        ],
-        max_tokens: 100,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+        "goalSentence": "Your single-sentence restatement of the question here.",
+        "questionType": "a",
+        "ragQueries": ["term1", "term2"],
+        "docTags": ["tag1", "tag2"]
       }
-    );
+    `.trim();
 
-    let responseText =
-      classificationResponse.data.choices[0]?.message?.content.trim() || "{}";
-
-    let parsedResponse;
+    const classificationResponse = await callOpenAI(firstPrompt, 1000);
+    let parsedFirst;
     try {
-      parsedResponse = JSON.parse(responseText);
+      parsedFirst = JSON.parse(classificationResponse);
     } catch (error) {
-      console.error("Error parsing JSON response:", error);
-      parsedResponse = {
-        goalSentence: "Could not parse response.",
+      parsedFirst = {
+        goalSentence: "Unknown goal.",
         questionType: "j",
+        ragQueries: [],
+        docTags: [],
       };
     }
 
-    let goalSentence = parsedResponse.goalSentence || "Unknown goal.";
-    let questionType =
-      parsedResponse.questionType?.toLowerCase().replace(/[^a-jk]/g, "") || "j";
+    console.log(parsedFirst);
 
-    console.log("Goal Sentence:", goalSentence);
-    console.log("Question Type:", questionType);
+    // =====================================================
+    // STEP 3: GATHER RELEVANT EVIDENCE
+    // =====================================================
+    let ragData = [];
+    for (let query of parsedFirst.ragQueries || []) {
+      const matches = await performRAGQuery(query);
+      ragData.push(`\n=== RAG for [${query}]:\n${matches.join("\n\n")}`);
+    }
 
-    // =====================================================================================
-    // STEP 4: READ USER-UPLOADED DOC SUMMARIES, DETERMINE RELEVANT DOCS, GET INSIGHTS,
-    //         AND COME UP WITH A PROMPT TO ASK RAG FOR "FURTHER RESEARCH"
-    // -------------------------------------------------------------------------------------
-    //   => We'll do a short GPT call that processes userDocuments, googleResults, BLS data,
-    //      and the user’s question to create a “ragPrompt” that we'll feed to Pinecone in Step 5.
-    // =====================================================================================
-
-    // If you want to keep it super simple, you could do something like:
-    const buildRAGPrompt = `
-      You are an expert in employee benefits.
-      We have these user-uploaded document summaries:\n${JSON.stringify(
-        userDocuments
-      )}
-      We also have some optional external data from google or BLS:\nGoogle:\n${googleResults}\nBLS:\n${blsData}
-
-      The user asked: "${message}". 
-
-      Please figure out the most relevant, SPECIFIC query to ask our vector database (RAG) so that we can get more context.
-      Please return ONLY that single query, with no extra text or explanation. 
-    `;
-
-    const ragPromptResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: buildRAGPrompt },
-        ],
-        max_tokens: 100,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+    let docSummaries = [];
+    for (let tag of parsedFirst.docTags || []) {
+      const docData = await getDocumentByTag(userId, tag);
+      if (docData) {
+        docSummaries.push(
+          `DOC NAME: ${docData.name}\nSUMMARY: ${docData.summary}`
+        );
       }
-    );
+    }
 
-    let ragPrompt =
-      ragPromptResponse.data.choices[0]?.message?.content.trim() ||
-      "benefits claims cost trends";
-    console.log("RAG Prompt:", ragPrompt);
-
-    // =====================================================
-    // STEP 5: QUERY RAG WITH THE *MOST RELEVANT PROMPT*
-    //          (NOT THE USER'S ORIGINAL MESSAGE)
-    // -----------------------------------------------------
-    //    => Now we do our original Pinecone call:
-    // =====================================================
-    const ragResults = await performRAGQuery(ragPrompt);
-
-    // =====================================================
-    // STEP 6: READ THE RAG RESULTS & GET INSIGHTS
-    // -----------------------------------------------------
-    //    => We'll just store them in a variable for now:
-    // =====================================================
-    const ragInsights = ragResults.join("\n\n");
-    //console.log("RAG Insights:", ragInsights);
-
-    // =====================================================
-    // STEP 7: COMBINE USER DOC INSIGHTS WITH RAG INSIGHTS
-    // -----------------------------------------------------
-    //    => We'll produce one consolidated string, for the final GPT call
-    // =====================================================
-    const finalCombinedData = `
-    User Document Insights:
-    ${userDocuments.join("\n\n")}
-
-    RAG Insights:
-    ${ragInsights}
-
-    Google Results (optional):
-    ${googleResults}
-
-    BLS Data:
-    ${blsData}
+    const compiledEvidence = `
+      External/Public Data:
+      ${ragData.join("\n\n")}
+      
+      Documents from My Company:
+      ${docSummaries.join("\n\n")}
     `.trim();
 
     // =====================================================
-    // STEP 8: ANSWER THE USER'S QUESTION, CONTEXTUALIZED
-    // -----------------------------------------------------
-    //    => Re-use your “secondPrompts” approach, but
-    //       feed finalCombinedData as the "public data".
+    // STEP 4: SELECT RESPONSE TEMPLATE
     // =====================================================
-
     const secondPrompts = {
       a: `
 
-Use the public/web data (attached below) to suggest 3 point solution vendors to target the issues stated above 
-IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses. Do not make up factual information, do not hallucinate. 
-Give extremely specific expert vendors tailored to the circumstance.). 
-In a table, evaluate the vendors by name (with a clickable href URL to their website), features, cost, engagement, NPS, user feedback, integration.
-
+          Use the public/web data (attached below) to suggest 3 point solution vendors to target the issues stated above 
+          IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses. Do not make up factual information, do not hallucinate. 
+          Give extremely specific expert vendors tailored to the circumstance.). 
+          In a table, evaluate the vendors by name (with a clickable href URL to their website), features, cost, engagement, NPS, user feedback, integration.
+          After the table, create a matrix of categories to score the vendors, then assign a final score with justification, and highlight the top vendor.
       `,
       b: `
 
-Generate a Request for Proposals (RFP) to get more point solutions 
-which includes the following sections: 
-(Introduction, Scope of Work, Vendor Requirements, Proposal Guidelines, Evaluation Criteria, Timeline).
+          Generate a Request for Proposals (RFP) to get more point solutions 
+          which includes the following sections: 
+          (Introduction, Scope of Work, Vendor Requirements, Proposal Guidelines, Evaluation Criteria, Timeline).
 
       `,
       c: `
-
-Use scientific, mathematical, and financial equations to state the quantifiable, specific, 
-numerical breakdown of cost savings and ROI estimation with justifications that reflects the situation above.
+          
+          Use scientific, mathematical, and financial equations to state the quantifiable, specific, 
+          numerical breakdown of cost savings and ROI estimation with justifications that reflects the situation above.
 
       `,
       d: `
 
-Write a highly personalized email that’s professional and concise which responds to the situation above.
+          Write a highly personalized email that’s professional and concise which responds to the situation above.
 
       `,
       e: `
 
-Generate a valid HTML survey which addresses the situation above 
-(valid in the sense that checkboxes should be clickable, input forms should be real text input, etc.).
+          Generate a valid HTML survey which addresses the situation above 
+          (valid in the sense that checkboxes should be clickable, input forms should be real text input, etc.).
 
       `,
       f: `
@@ -801,11 +825,10 @@ Generate a valid HTML survey which addresses the situation above
 
       `,
       g: `
-
         Come up with a Risk profile workflow based on the provided company size (${employeeCount} employees) 
         and areas of operation (${locations}) that is able to predict and forecast clinical risk. 
 
-        First, Search these sources to gather evidence to build the risk profiles.
+        First, Search the external evidence AND these sources to gather evidence to build the risk profiles, be sure to include source names.
           1. state/federal public health data
           2. legislation/regulatory data
           3. benefits trends
@@ -840,16 +863,20 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       `,
       i: `
-          Part 1: Search these sources to answer my question:
+          First, Directly answer the user's question in ONE SENTENCE.
+
+          Part 1: Search the external evidence AND these sources to gather evidence, be sure to include source names.
           1. state/federal public health data
           2. legislation/regulatory data
           3. benefits trends
           4. bureau of labor statistics
-          5. What are similar companies to me doing successfully? (anonymize the names for confidentiality)
-          
-          Part 2: Cross reference my company's internal medical spend trends/data with external data findings to find correlations and surprisingly nuanced insights. USE MY INTERNAL COMPANY DATA! SPECIFICALLY REFERENCE IT.
+          5. Industry benchmark data
 
-          Part 3: Hypotheses
+          Part 2: Using your best judgement, what strategies are similar companies to me doing successfully? (anonymize the names for confidentiality)
+          
+          Part 3: Cross reference my company's internal medical spend trends/data with external data findings to find correlations and surprisingly nuanced insights. USE MY INTERNAL COMPANY DATA! SPECIFICALLY REFERENCE IT.
+
+          Part 4: Hypotheses
 
           Focus on SPECIFIC, NUMERICAL, quantitative, statistical insights. Source information from a variety of REAL sources, especially government, corporate, and health sites (ie: NIH, SHRM, BOL... etc). DO NOT MAKE UP FACTUAL INFORMATION!
 
@@ -860,11 +887,11 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       
       Respond in a structured way as follows.
       
-      1. (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what benefits trends are there", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
+      (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what benefits trends are there", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
 
-      1. Directly answer the user's question in bullet points from reading and analyzing the user's company data (userDocuments).
-      For example "what is the highest claim?" --> "Cancer". 
-      2. Explain and summarize the company data that's relevant to the user's question and come up with some hypothses, for example, "what are the reasons behind these high claims?" --> SDOH factors & HRIS data
+      1. First, Directly answer the user's question in ONE SENTENCE.
+
+      2. Next, Explain and summarize the company data that's relevant to the user's question and come up with some hypothses, for example, "what are the reasons behind these high claims?" --> SDOH factors & HRIS data
 
       Focus on specific, quantitative, statistical insights.
 
@@ -878,13 +905,29 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       
       Respond in a structured way as follows.
       
-      1. (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what can I do about my company issues", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
+      (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what can I do about my company issues", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
+      
+      1. First, Directly answer the user's question in ONE SENTENCE.
 
       2. Actionable Suggestions: give me (bullets) 5+ actionable suggestions (each should have a priority) and a quantifiable, specific, numerical breakdown of cost savings and ROI estimation with justifications. Actions could include, recommend a vendor, draft an email campaign, design a survey, etc. Get creative.
 
       IMPORTANT, use the sources below to construct your answer in a tailored specific way to the company's top medical spends.
 
             `,
+      l: `
+
+          Imagine you're the CEO of a company similarly sized, located, and industry as mine. You are giving me advice. How would you tackle this issue, what strategies would you employ, what are some case studies of success?
+          At the beginning of the response, directly answer my question in 1 sentence.
+          Your response should be technical, professional, objective, and in 3rd person passive.
+
+      `,
+      m: `
+        First, directly answer the question in 1 concise sentence.
+        Then, Provide clear, structured guidance that aligns with regulatory requirements while making the information actionable. 
+        Identifying the relevant laws and regulations (e.g., ACA, HIPAA, ERISA, COBRA, or state-specific mandates) that impact their benefits program, with justifications. 
+        Create a concise compliance checklist or gap analysis to help them assess whether their plans meet legal requirements. 
+        If there are potential compliance risks, suggest specific actions to address them, such as updating documentation, adjusting eligibility criteria, or working with legal counsel. 
+      `,
       y: `
       
             This question seems not to specify whether the question is about my company or about external context.
@@ -897,92 +940,53 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       `,
     };
 
-    // If the type is missing, default to "j":
-    let secondPromptBody = secondPrompts[questionType] || secondPrompts["j"];
+    let secondPromptBody =
+      secondPrompts[parsedFirst.questionType] || secondPrompts["j"];
 
-    // Add your universal instructions at the end
-    const secondPromptFooter = `
-
-    ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
-    Public/External Data + Internal Insights:
-    ${finalCombinedData}
-
-    IMPORTANT! DO NOT MAKE UP FACTUAL INFORMATION! ONLY PROVIDE REAL SOURCES FROM ACTUAL WEBSITES WITH ACCURATE VALID INFORMATION.
-    IMPORTANT! For the response body (not the follow up questions) Provide your answer in valid HTML Markdown syntax only, no asterisks no ***!! Only use valid <HTML> tags
-    IMPORTANT! Incorporate FontAwesome icons to structure your response in a nicely visually appealing way.
-    IMPORTANT! Make your response aesthetically appealing by adding colored text, highlights, structuring sections into HTML cards, padding between elements (especially tables), USE FONTAWESOME ICONS!! <i className="fa fa-home"></i>.
-    IMPORTANT! Do not produce extra commentary beyond the instructions. No weird HTML explanations or CTAs after the answer!!!!!!
-
-    Here’s what we’ve said in previous conversations, for context:
-${historyPrompt}
-    `.trim();
-
-    // Build Final Prompt (Same as before)
-    const finalSecondPrompt = `
-    You are an expert in Employee Benefits and public health. 
-    I have an extremely important task for you that determines the future of our careers.
-    I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees and operates in ${locations}.
-    I have asked you this question: "${message}”.
-    My goal is: "${goalSentence}".
+    const secondPrompt = `
+      You are an expert in employee benefits. 
+      I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry. 
+      I have asked you this question ${message}
+      Respond appropriately based on these instructions:
 
       ${secondPromptBody}
-      ${secondPromptFooter}
 
-      IMPORTANT: At the very end of your response, generate **exactly two follow-up questions** that the user can ask next. These questions should be:
-      - Relevant to the conversation.
-      - Thought-provoking.
-      - Helpful for deeper insights.
-      - Relevant to question types we can answer (for example: Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Give me background info / Understanding benefits trends / bigger picture / other data from external public data, Give me company info / Understanding trends/claims costs/ other data about my internal company data, Suggest actions / what can I do about this issue?)
+      Response format:
+      - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>.
+      - Do not include the characters \
+      - Use FontAwesome icons for visual structuring.
+      - Apply color styling with #007bff and #6a11cb.
+      - Structure response into HTML cards with proper padding.
 
-      IMPORTANT 
-      **Return follow up questions in this structured JSON format at the bottom of your response:**
-      \`\`\`json
-      { "followUps": ["Follow-up question 1?", "Follow-up question 2?"] }
-      \`\`\`
+      Evidence:
+      ${compiledEvidence}
+       ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
-      DO NOT USE OTHER FORMATS LIKE "console.log JSON stringify"
+      IMPORTANT: At the very end of your response, generate **exactly two follow-up questions** that the user can ask next in JSON format:
+      { "followUps": ["Question1?", "Question2?"] }
     `.trim();
 
-    // Make the final GPT call
-    const openaiResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: finalSecondPrompt },
-        ],
-        max_tokens: 5000,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const finalResponse = await callOpenAI(secondPrompt, 2000);
+    let botReply = finalResponse.replace(/```html/g, "").replace(/```/g, "");
 
-    let botReply =
-      openaiResponse.data.choices[0]?.message?.content ||
-      "I'm sorry, I couldn't process that.";
-
-    botReply = botReply.replace(/```html/g, "").replace(/```/g, "");
-
-    // Extract follow-up questions from JSON response
-    const followUpMatch = botReply.match(/json\s*(\{[\s\S]*?\})/);
     let followUps = [];
+    const followUpMatch = botReply.match(
+      /\{[\s\S]*?"followUps":\s*\[[\s\S]*?\]\s*\}/
+    );
     if (followUpMatch) {
       try {
-        const jsonPart = followUpMatch[1].trim();
-        followUps = JSON.parse(jsonPart).followUps || [];
-        // Remove the matched JSON string from botReply
+        followUps = JSON.parse(followUpMatch[0]).followUps || [];
         botReply = botReply.replace(followUpMatch[0], "").trim();
       } catch (err) {
         console.error("Error parsing follow-ups:", err);
       }
     }
-    console.log(followUps);
-    return res.json({ questionType, reply: botReply, followUps });
+
+    return res.json({
+      questionType: parsedFirst.questionType,
+      reply: botReply,
+      followUps,
+    });
   } catch (error) {
     console.error("Error handling chat request:", error);
     return res.status(500).json({ error: "Failed to process chat request." });

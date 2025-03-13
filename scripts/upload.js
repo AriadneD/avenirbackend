@@ -1,6 +1,5 @@
 require("dotenv").config();
-console.log("Pinecone API Key:", process.env.PINECONE_API_KEY);
-console.log("Pinecone Environment:", process.env.PINECONE_ENVIRONMENT);
+
 
 const fs = require("fs");
 const path = require("path");
