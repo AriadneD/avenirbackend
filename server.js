@@ -735,9 +735,10 @@ app.post("/chat", async (req, res) => {
     const secondPrompts = {
       a: `
 
-          Use the public/web data (attached below) to suggest 3 point solution vendors to target the issues stated above 
-          IMPORTANT!!! ONLY SUGGEST REAL vendors that are REAL businesses, with REAL website URLS you can click. Do not make up factual information, do not hallucinate. 
-          Give extremely specific expert vendors tailored to the circumstance.). 
+          Suggest 3 point solution vendors (businesses) to target the issues stated above 
+          IMPORTANT! Only suggest real vendors that exist in real life.
+          Do not make up fake vendors, do not hallucinate, do not give generic responses like "Vendor A".
+          Give extremely specific expert vendors tailored to the circumstance. 
           In a table, evaluate the vendors by name (with a clickable href URL to their website), features, cost, engagement, NPS, user feedback, integration.
           After the table, create a matrix of categories to score the vendors, then assign a final score with justification, and highlight the top vendor.
       `,
@@ -912,8 +913,8 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>.
       - Do not include the characters \
       - Use FontAwesome icons for visual structuring.
-      - Apply color styling with #007bff and #6a11cb (remember to use white text if you use a colored background).
-      - Structure response into HTML cards with proper padding and mobile-responsive design.
+      - You can color text headings and icons with #007bff and #6a11cb.
+      - Ensure tables are mobile responsive
 
       Evidence:
       ${compiledEvidence}
