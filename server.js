@@ -610,46 +610,6 @@ async function callOpenAI(prompt, maxTokens = 500) {
 
 // POST /chat route
 
-const { ChatOpenAI } = require("@langchain/openai");
-const { BufferMemory } = require("langchain/memory");
-const { HumanMessage, SystemMessage } = require("@langchain/core/messages");
-
-// Create a ChatOpenAI model instance
-// Use whichever model name you need
-const chatModel = new ChatOpenAI({
-  openAIApiKey: process.env.REACT_APP_OPENAI_API_KEY,
-  modelName: "gpt-4o-mini",
-  temperature: 0,
-});
-
-// Set up memory for the conversation
-// This keeps track of prior exchanges
-const chatMemory = new BufferMemory({
-  returnMessages: true,
-  memoryKey: "history",
-});
-
-// Helper: single call to the chat model with memory
-async function callLangChain(prompt) {
-  // Our prompt is appended to the conversation memory behind the scenes
-  // You can add a SystemMessage here or do so inside the route
-  const response = await chatModel.call(
-    [
-      new SystemMessage("You are a helpful assistant."),
-      new HumanMessage(prompt),
-    ],
-    {
-      // Supply memory so it can update its internal state
-      // If you want each call to be separate from the conversation, omit memory
-      memory: chatMemory,
-    }
-  );
-  return response.text;
-}
-
-// ---------------------------------------------
-// REFRESHED /chat route using LangChain
-// ---------------------------------------------
 app.post("/chat", async (req, res) => {
   try {
     // ---------------------------

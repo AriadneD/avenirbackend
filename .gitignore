@@ -12,9 +12,9 @@
 /build
 
 # documents folders
-/uploadcomplete
-/uploads
-/documents
+/backend/uploadcomplete
+/backend/uploads
+/backend/documents
 
 # misc
 .env

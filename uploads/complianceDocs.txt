@@ -1,0 +1,277 @@
+Summary of "Regulatory & Legislative Update: What Employers Need to Know in 2024"
+The document provides a comprehensive overview of key regulatory and legislative updates that employers must consider to ensure compliance in the administration of employee benefits plans in 2024. It emphasizes the importance of adhering to fiduciary responsibilities and highlights recent legislative changes that impact welfare plans and health coverage offerings.
+
+Introduction to Compliance and Fiduciary Duties
+The document underscores that maintaining compliant benefits plans is essential not only for meeting legal requirements but also for safeguarding employee rights and organizational investments. The focus on fiduciary responsibility has intensified, making it imperative for employers to manage welfare plans diligently.
+
+Fiduciary duties are categorized into two types: named fiduciaries (officially listed in the plan) and functional fiduciaries (those who exercise authority over the plan). These duties include managing risk, monitoring fees, adhering to plan documents, and providing accurate information to participants. Failure to meet these obligations can result in penalties and enforcement actions.
+
+Key Regulatory Updates for 2024
+Several updates in federal regulations directly impact employee benefits plans:
+
+1. ERISA (Employee Retirement Income Security Act)
+ERISA sets minimum standards for retirement and welfare benefit plans, ensuring the protection of plan participants. The document details the types of plans covered under ERISA and those exempt, such as government and church plans.
+
+2. The No Gag Clause Rule
+The Consolidated Appropriations Act of 2021 introduced the "No Gag Clause Rule," which mandates that agreements with insurers and healthcare providers must not restrict the sharing of health plan cost and quality information. Employers must annually attest their compliance with this rule through the Centers for Medicare & Medicaid Services (CMS).
+
+3. Prescription Drug and Medical Reporting
+Employers must submit annual reports on healthcare and drug spending via the RxDC module in HIOS. This reporting applies to all health plans, including insured and self-funded plans, and is due by June 1 each year.
+
+4. Transparency in Coverage Regulations
+Since July 2022, health plans have been required to post machine-readable files (MRFs) detailing in-network rates and out-of-network costs for medical and prescription drugs. The document highlights that by 2024, price comparisons must be made available for all shoppable services.
+
+5. Mental Health Parity Act & Addiction Equity Act (MHPAEA)
+The MHPAEA requires that mental health and substance use disorder services receive the same financial and treatment limits as medical services. Employers must maintain a comparative analysis demonstrating parity and submit it upon request to relevant authorities.
+
+Year-End Compliance To-Dos
+The document outlines critical year-end tasks for employers to avoid penalties:
+
+Employer Shared Responsibility: Applicable to employers with 50+ employees, this provision under the Affordable Care Act (ACA) requires offering affordable health coverage. The document provides details on IRS reporting forms and deadlines for compliance.
+
+Annual Notice Obligations: Employers must distribute various notices, including the Women’s Health and Cancer Rights Act Notice and Medicare Part D Creditable Coverage Disclosure, to relevant parties each year.
+
+EEOC Reporting: Employers with 15+ employees must display the "Know Your Rights" poster to comply with EEOC requirements. Additionally, the Pregnant Workers Fairness Act (PWFA), effective June 27, 2023, requires updates to workplace materials.
+
+Lingering COVID Issues: While COVID-19 vaccines remain an ACA preventive service, only in-network first-dollar coverage is mandated following the end of the public health emergency. COVID testing is no longer required as a preventive service.
+
+Paid Family and Medical Leave Laws: The document lists states that have enacted paid leave laws, with new provisions taking effect in Minnesota (2024) and Maine (2026). It also highlights states allowing voluntary paid leave programs and the sale of paid family leave insurance.
+
+2024 Cost-of-Living Adjustments (COLA) and Other Changes
+The guide outlines key COLA updates for 2024:
+
+Flexible Spending Accounts (FSA): The FSA cap increases to $3,200 in 2024.
+Qualified Transportation Fringe Benefits: Limits for commuter and parking expenses rise to $315 monthly.
+Health Savings Accounts (HSA): Annual contribution limits for individual and family coverage increase.
+Qualified Small Employer Health Reimbursement Arrangements (QSEHRAs): Payment limits rise to $6,150 for individual coverage and $12,450 for family coverage.
+The document also mentions potential legislative changes, such as increased transparency for Pharmacy Benefit Managers (PBMs) and expanded ACA preventive services. However, these changes remain uncertain.
+
+---
+
+The **2024 Employee Benefits Compliance Guide** by Brown & Brown provides detailed compliance guidelines for employer-sponsored health plans. Below is a comprehensive summary:
+
+---
+
+### **Affordable Care Act (ACA) Requirements**
+- **Summary of Benefits and Coverage (SBC):** Mandatory disclosure outlining health plan details in a standardized format. Required at initial enrollment, annually, after special enrollment, and upon request.
+- **Employer Shared Responsibility:** Applicable Large Employers (ALEs) with 50+ full-time employees must offer affordable health coverage to avoid penalties. Reporting via IRS Forms 1094-C and 1095-C is required.
+
+---
+
+### **ERISA Reporting and Disclosure**
+- **Form 5500:** Must be filed annually by plans with 100+ participants.
+- **Summary Plan Description (SPD):** Must be provided to participants within 90 days of enrollment and every five years if amended.
+- **Summary of Material Modifications (SMM):** Required within 210 days after a material plan change.
+
+---
+
+### **COBRA (Consolidated Omnibus Budget Reconciliation Act)**
+- **General Notice:** Must be provided within 90 days of coverage start.
+- **Election Notice:** Sent within 44 days after a qualifying event.
+- **Special Enrollment Rights:** Required for events like marriage, birth, adoption, or loss of other coverage.
+
+---
+
+### **HIPAA (Health Insurance Portability and Accountability Act)**
+- **Notice of Privacy Practices:** Must be provided at enrollment and every three years.
+- **Electronic Disclosure Requirements:** Documents can be provided electronically if safe harbor requirements are met.
+
+---
+
+### **Medicare Requirements**
+- **Medicare Part D Notice:** Employers must notify Medicare-eligible participants about their prescription drug coverage status annually by October 15.
+
+---
+
+### **Wellness Program Requirements**
+- **HIPAA Wellness Requirements:** Wellness programs must provide reasonable alternatives to achieve incentives if based on health factors.
+- **ADA & GINA Compliance:** Wellness programs collecting health data must comply with limits on incentives and data privacy requirements.
+
+---
+
+### **Internal Revenue Code (IRC) Compliance**
+- **Cafeteria Plans:** Allows employees to make pre-tax contributions to health and welfare benefits under a formal Section 125 plan.
+- **Flexible Spending Accounts (FSA):** Limits on contributions and rollover amounts are set annually.
+
+---
+
+### **State-Specific Laws**
+- Certain states require paid family leave and short-term disability coverage (e.g., California, New York).
+
+---
+
+### **No Surprises Act & Transparency Rules**
+- Effective from 2022, the No Surprises Act addresses out-of-network billing protections and transparency requirements.
+
+---
+
+### **General Reporting Requirements**
+- Employers must comply with reporting deadlines for Form 5500, COBRA notices, HIPAA disclosures, Medicare Part D notices, and wellness program notices.
+
+This guide serves as a comprehensive resource for HR professionals to ensure compliance with federal and state employee benefits regulations.
+
+---
+
+Here’s a **detailed quantitative-focused summary** of the key compliance deadlines and action items for health plan sponsors in 2024, based on the **Baker Donelson compliance guide**:
+
+---
+
+### **Critical Deadlines & Actions for 2024**
+
+| **Compliance Item**                             | **Action Required**                               | **Deadline**       | **Applicable Plan Type**          |
+|-------------------------------------------------|--------------------------------------------------|-------------------|-----------------------------------|
+| **HIPAA Privacy Update (Reproductive Health Care)** | Update HIPAA policies, business associate agreements, and train workforce members. | **12/23/2024**    | All health plans                  |
+| **Gag Clause Attestation**                      | File attestation with CMS that no gag clauses exist in plan agreements. | **12/31/2024**    | All group health plans            |
+| **Mental Health Parity (NQTL Compliance)**      | Ensure compliance with non-quantitative treatment limitations. Provide reports within 10 business days upon request. | Effective **1/1/2026**, current rules apply until then. | Most group health plans |
+| **No Surprises Act**                            | Ensure compliance with surprise billing protections and transparency disclosures. | **Ongoing**       | Self-insured plans (via TPA)      |
+| **Cybersecurity Compliance**                    | Implement best practices for plan cybersecurity. | Effective **9/6/2024** | All ERISA plans                  |
+| **Prescription Drug Reporting (RxDC Reports)**  | Confirm TPAs file medical and drug cost reports (RxDC Reports). | **Annually**       | Self-insured plans                |
+
+---
+
+### **Penalty Risks for Non-Compliance (Quantitative)**
+
+| **Non-Compliance Issue**            | **Penalty Per Instance**                     | **Annual Cap**                  |
+|------------------------------------|---------------------------------------------|---------------------------------|
+| Failure to file **Gag Clause Attestation** | Up to **$100/day per affected participant**  | No specified cap                |
+| Failure to provide **NQTL report**  | Up to **$110 per participant per day**       | **$3,783,000** (for general IRS reporting violations) |
+| **HIPAA Privacy Violations**        | Up to **$63,973 per violation**              | Varies based on violation tier  |
+
+---
+
+### **Notable Compliance Areas to Monitor**
+
+1. **HIPAA Reproductive Health Protections**:  
+   - **Deadline**: December 23, 2024  
+   - Requires updates to policies, procedures, and workforce training to safeguard reproductive health-related PHI.
+
+2. **Mental Health Parity Compliance**:  
+   - Requires self-insured health plans to ensure that non-quantitative treatment limitations (NQTLs) for mental health services are not more restrictive than those for medical services.  
+   - **Response Time for Requests**:  
+     - **10 business days** for government requests.  
+     - **30 days** for participant requests following adverse benefit determinations.
+
+3. **Prescription Drug Cost Reporting (RxDC Reports)**:  
+   - Requires detailed reporting of prescription drug costs and spending trends to be filed annually with CMS.  
+   - Self-insured plan sponsors must confirm their TPA handles these filings.
+
+4. **Cybersecurity Obligations**:  
+   - ERISA plans must adopt cybersecurity best practices.  
+   - Guidance issued by DOL in **September 2024** reaffirms the need for robust data protection measures for health plans.
+
+---
+
+### **M&A Compliance Considerations**
+
+- Employers must review corporate transactions to ensure that new employees are covered under compliance obligations.  
+- Forms **1095-C** and **1094-C** must include accurate data for all newly acquired employees within the controlled group.
+
+---
+
+### **Summary of Key Risks & Actions**
+
+- **High-Risk Areas**: Gag clause attestation, cybersecurity compliance, NQTL reporting.
+- **Critical Deadlines**: December 23, 2024 (HIPAA privacy updates), December 31, 2024 (gag clause attestation).
+- **Penalty Ranges**: Up to **$63,973** per HIPAA violation, **$100/day per participant** for gag clause non-compliance.
+
+This guide outlines the **quantitative deadlines and penalties** to assist employers in prioritizing and managing health plan compliance tasks effectively.
+
+---
+
+Here's a **detailed summary** of the **Top Health Plan Compliance Issues for 2024** report, focusing on key deadlines, penalties, and regulatory developments that employers need to be aware of:
+
+---
+
+## **Key Compliance Issues for 2024**
+
+1. **Affordable Care Act (ACA) Reporting Changes**  
+   - **Electronic Filing Requirement**:  
+     - Threshold for mandatory electronic ACA reporting lowered from **250** to **10** forms.  
+     - Deadline for electronic filing: **April 1, 2024** (adjusted for weekend).  
+     - Employers must aggregate W-2, 1099, and ACA returns to determine eligibility.  
+     - **Hardship Waiver**: Can be requested using **Form 8508**.
+
+---
+
+2. **New Transparency Requirements**  
+   - **Cost Comparison Tool**:  
+     - As of **2024**, must include **all covered items, services, and drugs** (previously limited to 500 items).  
+   - **Machine-Readable Files (MRFs)**:  
+     - Non-grandfathered plans must publicly post:  
+       - In-network provider rates.  
+       - Out-of-network allowed amounts.  
+       - Prescription drug rates and prices.  
+   - **Prescription Drug Reporting (RxDC Reports)**:  
+     - **Annual deadline**: June 1, 2024 (extended to **June 3** for 2024).  
+   - **Gag Clause Attestations**:  
+     - **Annual deadline**: **December 31, 2024**.  
+
+---
+
+3. **Mental Health Parity and Addiction Equity Act (MHPAEA) Compliance**  
+   - **NQTL Comparative Analysis**:  
+     - Non-Quantitative Treatment Limitations (NQTLs) must be analyzed for parity with medical/surgical benefits.  
+     - Plans must provide this analysis upon request within:  
+       - **10 business days** for government agencies.  
+       - **30 days** for participants after adverse benefit determination.  
+   - **Proposed Rule (August 2023)**:  
+     - Focuses on **data collection** for evaluating parity.  
+     - Introduces a **special rule** for network composition.  
+     - Expected final rule in **2024**.
+
+---
+
+4. **Preventive Care Benefits (ACA Mandate)**  
+   - Recent litigation challenges preventive care mandates for services rated by the **U.S. Preventive Services Task Force**.  
+   - Employers must **continue offering preventive services without cost sharing** while the **5th Circuit Court of Appeals** case is pending.
+
+---
+
+5. **Contraceptive Coverage**  
+   - The federal government may expand the **preventive care mandate** to include **over-the-counter (OTC) contraceptives**.  
+   - Employers relying on the **moral exemption** should prepare for potential changes.
+
+---
+
+6. **Telehealth and High-Deductible Health Plans (HDHPs)**  
+   - The **CARES Act relief** allowing HDHPs to offer **first-dollar telehealth coverage** without affecting HSA eligibility will expire on **December 31, 2024**.  
+   - Employers should monitor **bipartisan legislation** that may extend or make this exception permanent.
+
+---
+
+7. **Cybersecurity Compliance**  
+   - Employers must adopt **cybersecurity best practices** for health plans under **ERISA**.  
+   - Ensure compliance with the **DOL’s cybersecurity guidelines**.
+
+---
+
+8. **Prescription Benefit Manager (PBM) Regulations**  
+   - Proposed **state and federal regulations** may require PBMs to:  
+     - **Apply drug discounts and rebates** directly to consumers.  
+     - Prohibit **spread pricing** (where PBMs retain the difference between pharmacy charges and plan payments).
+
+---
+
+## **Penalties for Non-Compliance**  
+Employers should be aware of potential penalties for failing to meet compliance requirements:
+
+| **Compliance Requirement**      | **Penalty**                           | **Deadline**             |
+|---------------------------------|---------------------------------------|-------------------------|
+| **Electronic ACA Filing**       | Up to **$280 per form** for failure   | **April 1, 2024**        |
+| **Prescription Drug Reporting** | **$100 per participant per day**      | **June 3, 2024**         |
+| **Gag Clause Attestation**       | **$100/day per affected participant** | **December 31, 2024**    |
+| **MHPAEA Compliance**           | Varies based on violations            | Upon request by agencies |
+
+---
+
+## **Summary of Deadlines and Actions for 2024**
+
+| **Action Item**                        | **Deadline**        | **Description**                                                |
+|---------------------------------------|--------------------|---------------------------------------------------------------|
+| **Electronic ACA Reporting**           | April 1, 2024      | Mandatory e-filing for employers with 10+ forms.              |
+| **Cost Comparison Tool Expansion**     | January 1, 2024    | Must cover **all items and services**.                        |
+| **RxDC Report Submission**             | June 3, 2024       | Reporting on **2023 drug costs** due.                         |
+| **Gag Clause Attestation**             | December 31, 2024  | Annual submission to CMS.                                     |
+| **Cybersecurity Compliance**           | Ongoing            | Implement DOL cybersecurity guidelines for health plans.       |
+
+---
