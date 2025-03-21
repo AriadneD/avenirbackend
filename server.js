@@ -628,7 +628,21 @@ app.post("/chat", async (req, res) => {
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
     // (A) Get user docs + build a quick chatHistory prompt if needed
-    const allDocs = await getAllDocuments(userId); // returns array of {name, tag}
+    
+    let allDocs = await getAllDocuments(userId);
+
+    if (allDocs.length === 0) {
+      allDocs = [
+        {
+          name: "No docs uploaded",
+          tag: "n/a",
+          summary: "n/a",
+        },
+      ];
+    }
+
+    console.log(allDocs);
+
 
     let googleResults = "";
     if (useWebSearch) {
@@ -638,6 +652,8 @@ app.post("/chat", async (req, res) => {
 
     // Build document listing for evidence gathering
     const docListing = allDocs.map((d) => `${d.name} (${d.tag})`).join("\n");
+
+    console.log(docListing);
     const shortHistory = chatHistory
       .filter((m) => m.role === "user")
       .slice(-10)
