@@ -921,26 +921,31 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       You are an expert in employee benefits. 
       I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry. 
       I have asked you this question ${message}
-      Respond appropriately based on these instructions:
+
+      First, answer my question to the best of your ability. This should be about 30% of your reply.
+
+      Next, continue the question's answer by following these instructions, which should take up the remaining 70% of your reply:
 
       ${secondPromptBody}
 
       Response format:
-      - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>.
+      - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>, other than that, use plain text.
       - Do not include the characters \
       - Use FontAwesome icons for visual structuring.
+      - use <h4> for headings and <p> for regular text, don't make titles too big.
       - You can color text headings and icons with #007bff and #6a11cb.
+      - Long, detailed answers are preferred over vague bullets.
       - Ensure tables are mobile responsive
 
       Evidence:
       ${compiledEvidence}
        ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
-      At the very end of your response, generate **exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
+      At the very end of your response, generate exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
 
-      IMPORTANT: Your follow up questions **must only** contain valid JSON. Do not include any other text, explanations, or symbols.
+      IMPORTANT: Your follow up questions must only contain valid JSON. Do not include any other text, explanations, or symbols.
 
-      Return the follow-up questions using the **EXACT JSON format** below, without adding any markdown, extra characters, or explanation:
+      Return the follow-up questions using the EXACT JSON format below, without adding any markdown, extra characters, or explanation:
       STRICT RULES:
 
       Only return JSON. No preamble, no text before or after.
@@ -957,7 +962,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
     `.trim();
 
-    const finalResponse = await callOpenAI(secondPrompt, 2500);
+    const finalResponse = await callOpenAI(secondPrompt, 3500);
     let botReply = finalResponse.replace(/```html/g, "").replace(/```/g, "");
     console.log(finalResponse);
     console.log(botReply);
@@ -1298,6 +1303,61 @@ app.post("/piechart", async (req, res) => {
     res.status(500).json({ error: "Failed to generate pie chart" });
   }
 });
+
+// ==============================
+// NOTEPAD AI ENDPOINT
+// ==============================
+app.post("/notepad/ai", async (req, res) => {
+  try {
+    const { userId, content } = req.body;
+
+    if (!userId || !content) {
+      return res
+        .status(400)
+        .json({ error: "Missing userId or note content." });
+    }
+
+    // Example system prompt for the AI
+    const systemPrompt = `You are an AI note assistant that helps summarize meeting notes, define keywords, and add actionable top priorities.`;
+
+    // Make request to OpenAI (or whichever LLM) for suggestions
+    const openaiResponse = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini", // or "gpt-4o-mini", etc. set your model
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `The user typed these notes:\n\n${content}\n\nPlease provide: 
+            1) 1-3 follow up questions for the user to ask
+            2) Key definitions of any jargon 
+            3) Three recommended next steps or top priorities
+            
+            Please provide your answer in plain text, no special characters.
+            `,
+          },
+        ],
+        max_tokens: 800,
+        
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const aiReply = openaiResponse.data.choices[0]?.message?.content || "";
+
+    return res.json({ aiReply });
+  } catch (error) {
+    console.error("Error generating Notepad AI suggestions:", error);
+    res.status(500).json({ error: "Failed to generate AI suggestions." });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
