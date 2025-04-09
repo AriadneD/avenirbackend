@@ -236,7 +236,6 @@ app.post("/summarizesearch", async (req, res) => {
 // Configure Multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-const pdfPoppler = require("pdf-poppler");
 const Tesseract = require("tesseract.js");
 const os = require("os");
 const { fromBuffer } = require("pdf2pic");
