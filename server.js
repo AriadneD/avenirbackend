@@ -493,7 +493,7 @@ const queryGoogleSearch = async (query, message) => {
       tools: [
         {
           type: "web_search_preview",
-          search_context_size: "low"
+          search_context_size: "low",
           // or user_location
         },
       ],
@@ -694,6 +694,42 @@ app.post("/chat", async (req, res) => {
     const { companyName, employeeCount, locations, industry } =
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
+    console.log("userdocuments: ", userDocuments);
+
+    if (userDocuments.length > 0) {
+      const singlePrompt = `
+        You are a senior expert in employee benefits.
+        Your user is an employee benefits professional at a company. They are non technical.
+        They have provided a document for you to analyze. Answer this question based on the document: "${message}"
+
+        Tone: 
+        Be specific, factual, and useful. 
+        Focus on quantitative insights. 
+        Come up with hypotheses and justifications for why you answered the question. 
+        Answer in second person addressed directly to the user. 
+        Avoid saying "Please find below the requested HTML format response" or anything like that.
+        
+        Output structure: 
+        Respond in simple HTML format, use bullets when possible.
+
+        Here is the document to analyze:
+        ${userDocuments}
+
+      `.trim();
+
+      const docOnlyResponse = await callOpenAI(singlePrompt, 2000);
+      const cleanReply = docOnlyResponse
+        .replace(/```html/g, "")
+        .replace(/```/g, "")
+        .trim();
+
+      return res.json({
+        reply: cleanReply,
+        evidence:
+          "Deep research responses are not provided when asking quick questions about only a specific document. For a longer reasoning cycle, try selecting 'None' to allow your AI assistant to browse all files. ",
+      });
+    }
+
     // (A) Get user docs + build a quick chatHistory prompt if needed
 
     let allDocs = await getAllDocuments(userId);
@@ -707,8 +743,6 @@ app.post("/chat", async (req, res) => {
         },
       ];
     }
-
-    
 
     const blsData = await queryBLS();
 
@@ -744,8 +778,8 @@ app.post("/chat", async (req, res) => {
             f) Write a communication / proposal / paper / executive summary
             g) Create a risk profile
             h) Evaluating a point solution
-            i) Give me background info / Understanding benefits trends / bigger picture / other data from external public data
-            j) Give me company info / Understanding trends/claims costs/ other data about my internal company data
+            i) Give me external info / Understanding benefits trends / bigger picture / other data from external public data
+            j) Give me info specifically about my internal company data
             k) Suggest actions / what can I do about this issue?
             l) industry benchmarking / what are other companies similar to me doing? 
             m) compliance question / are we compliant / understanding compliance / understanding terminology that relates to compliance / laws
@@ -821,7 +855,7 @@ app.post("/chat", async (req, res) => {
       Documents from My Company:
       ${docSummaries.join("\n\n")}
     `.trim();
-    
+
     // =====================================================
     // STEP 4: SELECT RESPONSE TEMPLATE
     // =====================================================
@@ -967,7 +1001,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
             `,
       l: `
 
-          Imagine you're the CEO of a company similarly sized, located, and industry as mine. You are giving me advice. How would you tackle this issue, what strategies would you employ, what are some case studies of success?
+          Imagine you're the CEO of a company similarly sized, located, and industry as mine. (Make sure you mention in the response that you are basing this on companies similar SIZE and INDUSTRY). You are giving me advice. How would you tackle this issue, what strategies would you employ, what are some case studies of success?
           At the beginning of the response, directly answer my question in 1 sentence.
           Your response should be technical, professional, objective, and in 3rd person passive.
 
@@ -1041,7 +1075,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
     const finalResponse = await callOpenAI(secondPrompt, 3500);
     let botReply = finalResponse.replace(/```html/g, "").replace(/```/g, "");
-    
+
     let followUps = [];
     const lastOpenBrace = botReply.lastIndexOf("{");
     const lastCloseBrace = botReply.lastIndexOf("}");
@@ -1069,7 +1103,6 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
         console.error("Error parsing follow-ups:", err);
       }
     }
-
 
     // =====================================================
     // STEP 4: SUMMARIZE THE EVIDENCE (NEW STEP)
@@ -1113,7 +1146,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 });
 
 app.post("/bargraph", async (req, res) => {
-  const { userId, message, selectedDocs } = req.body;
+  const { userId, message, useWebSearch, selectedDocs } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: "User message is required." });
@@ -1127,32 +1160,45 @@ app.post("/bargraph", async (req, res) => {
       documents = await getSelectedDocuments(userId, selectedDocs);
     }
 
+    let googleResults = "";
+    if (useWebSearch) {
+      // Or you could combine them with commas, or do multiple searches
+      googleResults = await queryGoogleSearch(message, "statistical trends");
+    }
+
     // Step 2: Prepare the GPT prompt to generate a bar graph
     const gptPrompt = `
       You are an expert data assistant. The user wants to generate a bar graph based on their message: "${message}". 
-      
+
       If there is no data provided, use your expert knowledge to fill in the graph as accurately as possible.
       No matter what, generate something!
-      
+
       Format your response as structured JSON like this:
 
       {
         "title": "Graph Title",
+        "xAxisLabel": "X Axis Label",
+        "yAxisLabel": "Y Axis Label",
         "labels": ["Label1", "Label2"],
-        "values": [Value1, Value2]
+        "values": [Value1, Value2],
+        "bullets": [
+          "What the graph shows",
+          "What all labels for axes and values mean",
+          "Data source or origin"
+        ]
       }
 
-      If the data is missing, prompt the user to provide the missing data or ask if they want to generate synthetic data.
-      
       FORMAT YOUR RESPONSE ONLY AS VALID JSON. NO COMMENTS. NO OTHER THINGS. ONLY VALID JSON. IMPORTANT!!!
       
       ${
         documents.length > 0
-          ? `Extract relevant data from these documents to graph: ${JSON.stringify(
+          ? `Extract relevant data from this document to graph: ${JSON.stringify(
               documents
             )}`
           : ""
       }
+
+      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
     `;
 
     // Step 3: Call GPT to generate the bar graph JSON
@@ -1187,7 +1233,7 @@ app.post("/bargraph", async (req, res) => {
     //console.log(graphData);
     // Step 5: Return the graph data to the frontend
     res.json({
-      reply: "Here is the bar graph you requested!",
+      reply: graphData.bullets?.join("\n\n") || "Here's your line graph!",
       graphData,
     });
   } catch (error) {
@@ -1197,7 +1243,7 @@ app.post("/bargraph", async (req, res) => {
 });
 
 app.post("/linegraph", async (req, res) => {
-  const { userId, message, selectedDocs } = req.body;
+  const { userId, message, useWebSearch, selectedDocs } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: "User message is required." });
@@ -1211,45 +1257,66 @@ app.post("/linegraph", async (req, res) => {
       documents = await getSelectedDocuments(userId, selectedDocs);
     }
 
+    let googleResults = "";
+    if (useWebSearch) {
+      // Or you could combine them with commas, or do multiple searches
+      googleResults = await queryGoogleSearch(message, "statistical trends");
+    }
+
+    console.log("Google Results: ", googleResults);
+
     // Step 2: Prepare the GPT prompt to generate a line graph
     const gptPrompt = `
-      You are an expert data assistant. The user wants to generate a line graph based on their message: "${message}". 
-      
-      If there is no data provided, use your expert knowledge to fill in the graph as accurately as possible.
-      No matter what, generate something!
-      
-      Format your response as structured JSON like this:
+     You are an expert data assistant. The user wants to generate a line graph based on this request: "${message}".
+
+      If no user data is provided, intelligently infer it using realistic values. Always return:
+      - A complete JSON with a valid graph
+      - Descriptive title
+      - Proper axis labels
+      - 3 bullet points explaining:
+        1. What the chart shows
+        2. What the axis labels mean, as specifically as possible for example is it cost in millions of dollars? hundreds of dollars?
+        3. The exact source of the information, provide the URL if possible, either from documents, the web, or your own knowledge
+
+      Strictly return only this JSON format (no comments, no prose):
 
       {
         "title": "Graph Title",
-        "labels": ["Label1", "Label2", "Label3"],
+        "xAxisLabel": "X Axis Label",
+        "yAxisLabel": "Y Axis Label",
+        "labels": ["2018", "2019", "2020", "2021", "2022", "2023"],
         "datasets": [
           {
-            "label": "Dataset 1",
-            "data": [Value1, Value2, Value3],
+            "label": "GLP-1 Drug Prescriptions",
+            "data": [5000, 8000, 12000, 18000, 25000, 35000],
             "borderColor": "rgb(75, 192, 192)",
             "backgroundColor": "rgba(75, 192, 192, 0.2)"
           },
           {
-            "label": "Dataset 2",
-            "data": [Value4, Value5, Value6],
+            "label": "Market Growth Rate (%)",
+            "data": [10, 15, 20, 25, 30, 35],
             "borderColor": "rgb(255, 99, 132)",
             "backgroundColor": "rgba(255, 99, 132, 0.2)"
           }
+        ],
+        "bullets": [
+          "GLP-1 prescriptions have seen exponential growth, indicating rising demand for metabolic disease treatments.",
+          "The chart also tracks consistent market expansion, highlighting sustained investment interest.",
+          "Data is from the 2024 SHRM report https://shrm.org."
         ]
       }
-
-      If the data is missing, prompt the user to provide the missing data or ask if they want to generate synthetic data.
 
       FORMAT YOUR RESPONSE ONLY AS VALID JSON. NO COMMENTS. NO OTHER THINGS. ONLY VALID JSON. IMPORTANT!!!
       
       ${
         documents.length > 0
-          ? `Extract relevant data from these documents to graph: ${JSON.stringify(
+          ? `Extract relevant data from this document to graph: ${JSON.stringify(
               documents
             )}`
           : ""
       }
+
+      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
     `;
 
     // Step 3: Call GPT to generate the line graph JSON
@@ -1285,7 +1352,7 @@ app.post("/linegraph", async (req, res) => {
 
     // Step 5: Return the graph data to the frontend
     res.json({
-      reply: "Here is the line graph you requested!",
+      reply: graphData.bullets?.join("\n\n") || "Here's your line graph!",
       graphData,
     });
   } catch (error) {
@@ -1295,7 +1362,7 @@ app.post("/linegraph", async (req, res) => {
 });
 
 app.post("/piechart", async (req, res) => {
-  const { userId, message, selectedDocs } = req.body;
+  const { userId, message, useWebSearch, selectedDocs } = req.body;
 
   if (!message) {
     return res.status(400).json({ error: "User message is required." });
@@ -1307,6 +1374,12 @@ app.post("/piechart", async (req, res) => {
     // Step 1: Fetch selected documents only if they exist
     if (selectedDocs && selectedDocs.length > 0) {
       documents = await getSelectedDocuments(userId, selectedDocs);
+    }
+
+    let googleResults = "";
+    if (useWebSearch) {
+      // Or you could combine them with commas, or do multiple searches
+      googleResults = await queryGoogleSearch(message, "statistical trends");
     }
 
     // Step 2: Prepare the GPT prompt to generate a pie chart
@@ -1331,11 +1404,13 @@ app.post("/piechart", async (req, res) => {
 
       ${
         documents.length > 0
-          ? `Extract relevant data from these documents to graph: ${JSON.stringify(
+          ? `Extract relevant data from this document to graph: ${JSON.stringify(
               documents
             )}`
           : ""
       }
+
+      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
     `;
 
     // Step 3: Call GPT to generate the pie chart JSON
@@ -1381,6 +1456,125 @@ app.post("/piechart", async (req, res) => {
   }
 });
 
+// In your server code, e.g. server.js or a routes file:
+app.post("/clusterchart", async (req, res) => {
+  const { userId, message, useWebSearch, selectedDocs } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: "User message is required." });
+  }
+
+  try {
+    let documents = [];
+    // Step 1: Fetch selected documents if they exist
+    if (selectedDocs && selectedDocs.length > 0) {
+      documents = await getSelectedDocuments(userId, selectedDocs);
+    }
+
+    let googleResults = "";
+    if (useWebSearch) {
+      // Or you could combine them with commas, or do multiple searches
+      googleResults = await queryGoogleSearch(message, "statistical trends");
+    }
+
+    // Step 2: Prepare GPT prompt
+    const gptPrompt = `
+      You are an expert data assistant. The user wants to generate a cluster (grouped) bar chart based on their message: "${message}".
+
+      Chart instructions:
+      - A cluster chart usually has multiple data series (clusters) for each label.
+      - You can draw as many clusters as needed — more clusters improve insight.
+      - Always use non-zero rValues.
+      - rValues must align 1:1 with the values array for each cluster.
+      - Avoid overlap and ensure the proximity of points reflects their relationship.
+      - Cluster names should be clear and meaningful (e.g., "High-Risk Group, Low Engagement").
+      - The relationships must be interpretable — avoid vagueness or meaningless labels.
+      - If no data is available, return an empty array (e.g., "clusters": []).
+
+      Format your response as valid JSON using this structure:
+
+      {
+        "title": "Your descriptive chart title",
+        "xAxisLabel": "X Axis Label",
+        "yAxisLabel": "Y Axis Label",
+        "labels": ["Label1", "Label2", "Label3"],
+        "clusters": [
+          {
+            "name": "Cluster 1 Name",
+            "values": [10, 15, 20],
+            "rValues": [5, 12, 8]
+          },
+          {
+            "name": "Cluster 2 Name",
+            "values": [30, 35, 40],
+            "rValues": [20, 22, 25]
+          }
+        ],
+        "bullets": [
+          "What this chart shows",
+          "What all labels for axes and clusters mean",
+          "Where the data comes from (e.g. SHRM 2024, user-uploaded doc)"
+        ]
+      }
+
+      YOU MUST RETURN VALID JSON NO SYNTAX ERRORS
+
+      If the data is missing, generate a hypothetical chart.
+
+      ${
+        documents.length > 0
+          ? `Extract relevant data from this document to graph: ${JSON.stringify(
+              documents
+            )}`
+          : ""
+      }
+
+      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
+
+      IMPORTANT: Return only valid JSON, with no code blocks or additional text.
+    `;
+
+    // Step 3: Call GPT with your settings
+    const gptResponse = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: gptPrompt },
+        ],
+        max_tokens: 500,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Step 4: Extract JSON
+    const responseText = gptResponse.data.choices[0]?.message?.content || "";
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch) {
+      throw new Error("No valid JSON found in GPT response");
+    }
+
+    const graphData = JSON.parse(jsonMatch[0]);
+    console.log(graphData);
+    console.log(JSON.stringify(graphData, null, 2));
+
+    // Step 5: Return to front-end
+    res.json({
+      reply: graphData.bullets?.join("\n\n") || "Here is the cluster chart you requested!",
+      graphData,
+    });
+  } catch (error) {
+    console.error("Error generating cluster chart:", error);
+    res.status(500).json({ error: "Failed to generate cluster chart" });
+  }
+});
+
 // ==============================
 // NOTEPAD AI ENDPOINT
 // ==============================
@@ -1405,10 +1599,10 @@ app.post("/notepad/ai", async (req, res) => {
           {
             role: "user",
             content: `The user typed these notes:\n\n${content}\n\nPlease provide: 
-            1) 1-3 follow up questions for the user to ask
-            2) Key definitions of any jargon 
-            3) Three recommended next steps or top priorities
-            
+            1) Three recommended next steps, to-dos or top priorities
+            2) 1-3 follow up questions for the user to ask
+            3) Key definitions of any jargon 
+           
             Please provide your answer in plain text, no special characters.
             `,
           },
