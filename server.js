@@ -236,9 +236,14 @@ app.post("/summarizesearch", async (req, res) => {
 // Configure Multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Route to handle file summarization
+const pdfPoppler = require("pdf-poppler");
+const Tesseract = require("tesseract.js");
+const os = require("os");
+const { fromBuffer } = require("pdf2pic");
+
 app.post("/summarize", upload.single("file"), async (req, res) => {
   const file = req.file;
+  const { pdfAsPPT, title, docType, summaryOption, summaryOther } = req.body;
 
   if (!file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -247,10 +252,53 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
   let extractedText = "";
 
   try {
-    // Process PDF files
+    // If PDF
     if (file.mimetype === "application/pdf") {
-      extractedText = await pdfParse(file.buffer).then((data) => data.text);
+      // Check if user selected "Yes, PDF is from PPT"
+      if (pdfAsPPT === "yes") {
+        const options = {
+          density: 150,
+          format: "png",
+          width: 1024,
+          height: 768,
+          saveFilename: "page",
+          savePath: "./temp-pdf-pages", // You can delete later
+        };
+
+        const savePath = path.resolve("./temp-pdf-pages");
+        if (!fs.existsSync(savePath)) {
+          fs.mkdirSync(savePath, { recursive: true });
+        }
+
+        const convert = fromBuffer(file.buffer, {
+          density: 150,
+          format: "png",
+          width: 1024,
+          height: 768,
+          saveFilename: "page",
+          savePath: savePath,
+        });
+
+        const pageCount = (await pdfParse(file.buffer)).numpages;
+
+        extractedText = "";
+
+        for (let i = 1; i <= pageCount; i++) {
+          const result = await convert(i); // Returns { path, base64, page }
+          const {
+            data: { text },
+          } = await Tesseract.recognize(result.path, "eng");
+          extractedText += text + "\n";
+        }
+
+        // Optional: clean up image files after
+        // fs.rmSync("./temp-pdf-pages", { recursive: true, force: true });
+      } else {
+        // Regular PDF parse
+        extractedText = await pdfParse(file.buffer).then((data) => data.text);
+      }
     }
+    // DOCX
     // Process DOCX files
     else if (
       file.mimetype ===
@@ -278,8 +326,13 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "Unsupported file type" });
     }
 
-    // Call GPT-4o-mini or OpenAI API to summarize the text
-    const response = await axios.post(
+    // Next, build the “prompt” to GPT, adding summary instructions
+    // example
+    const customInstructions =
+      summaryOption === "Other" ? summaryOther : summaryOption;
+
+    // ======== 1. GENERATE TAG (plain text) ========
+    const tagResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o-mini",
@@ -288,47 +341,42 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
           {
             role: "user",
             content: `
-            You are an expert in employee benefits and data analytics. 
-            Your task is to concisely summarize the uploaded document and provide a one-sentence tag.
+              Please read the uploaded document and return a single-sentence tag that clearly describes its content. No preamble, just the sentence.
 
-            The summary should be written in Valid HTML markdown 
-            
-            
+              Example: Summary of a multi-generational disability benefits analysis by region.
 
-            First, determine the type of document. 
-            If it is a regular document, just summarize it normally. 
+              Text to analyze:\n\n${extractedText}
+            `,
+          },
+        ],
+        max_tokens: 500,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-            But if it is a table, focus on key quantitative trends & insights in the data.
-            It should be broken down into sections.
-            
-            Use this type of format:
-            Make an HTML table with
-            Total number of value per category
-            Mean, max, and min value for each column
-            Category wise breakdown if there are significant differences
+    const tag = tagResponse.data.choices[0]?.message?.content?.trim();
 
-            After the table, provide 20 detailed, specific bullet point key findings that cover, such as:
-            What is most common?
-            What is most expensive/highest?
-            Where do values vary the most?
-            Any category level variations?
-            Outliers or notable trends?
+    // ======== 2. GENERATE SUMMARY (plain HTML/text) ========
+    const summaryResponse = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          {
+            role: "user",
+            content: `
+              You are an expert in employee benefits and data analytics. Summarize the document using the following user instruction: "${customInstructions}".
 
-            Note: State based trends, and other social determinants of health factors are really important!! Include as many as you can.
+              Return a long, content-rich summary in simple HTML format. Use headers and bullet points if appropriate. Be detailed, and focus on conntent, not design.
 
-            For the Tag:
-
-            Provide a concise but detailed one-sentence description of the file.
-            Use a precise string format, making it clear what the file contains.
-
-
-            Text to analyze:\n\n${extractedText}
-            
-            IMPORTANT: Give your overall response in JSON format. no extra text, no "console.log json stringify", no incomplete unterminated JSON.
-            {
-              "summary": "<Summary here (HTML inside the JSON)>",
-              "tag": "<Categorization in one sentence>"
-            }`,
+              Text to summarize:\n\n${extractedText}
+            `,
           },
         ],
         max_tokens: 2500,
@@ -341,22 +389,13 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
       }
     );
 
-    let responseText = response.data.choices[0]?.message?.content?.trim();
+    const summary = summaryResponse.data.choices[0]?.message?.content?.trim();
 
-    console.log(responseText);
-
-    // ✅ Remove invalid backticks (` ```json ... ``` `) if they exist
-    responseText = responseText
-      .replace(/```json/g, "")
-      .replace(/```/g, "")
-      .trim();
-
-    // ✅ Parse the cleaned JSON response
-    const { summary, tag } = JSON.parse(responseText);
-    res.status(200).json({ summary, tag });
+    // ======== Final Return ========
+    return res.status(200).json({ tag, summary });
   } catch (error) {
     console.error("Error processing file:", error);
-    res.status(500).json({ error: "Failed to process file" });
+    return res.status(500).json({ error: "Failed to process file" });
   }
 });
 
@@ -428,19 +467,48 @@ const getUserUploadedDocuments = async (userId) => {
   }
 };
 
-// Helper function to query Google Custom Search API
-const queryGoogleSearch = async (query) => {
-  const response = await axios.get(
-    `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(
-      query
-    )}&key=${GOOGLE_API_KEY}&cx=${SEARCH_ENGINE_ID}`
-  );
+const { default: OpenAI } = require("openai");
 
-  return response.data.items
-    ? response.data.items
-        .map((item) => `${item.title}: ${item.snippet}`)
-        .join("\n")
-    : "No relevant results found.";
+// Helper function to query OpenAI Responses Search API
+const queryGoogleSearch = async (query, message) => {
+  try {
+    const client = new OpenAI({
+      apiKey: process.env.REACT_APP_OPENAI_API_KEY,
+    });
+    console.log(query);
+    const prompt = `
+      You are a senior expert researcher. Perform a web search for the following topics:
+      "${query}" and "${message}"
+
+      Then, list the top 5 relevant online website sources in concise bullet points.
+      For each site, please provide:
+
+      1. The website name or source
+      2. A brief snippet (1-2 lines) summarizing the main point from that site
+
+      Return only plain text, with no extraneous commentary or disclaimers.
+    `.trim();
+
+    const response = await client.responses.create({
+      model: "gpt-4o-mini",
+      tools: [
+        {
+          type: "web_search_preview",
+          search_context_size: "low"
+          // or user_location
+        },
+      ],
+      input: prompt,
+    });
+
+    // Just access 'output_text'
+    const resultText = response.output_text || "No relevant results found.";
+    console.log(resultText);
+    return resultText.trim();
+  } catch (error) {
+    console.error("OpenAI web search error:", error);
+    return "No relevant results found.";
+  }
 };
 
 // Helper function to dynamically load relevant domain files
@@ -628,7 +696,7 @@ app.post("/chat", async (req, res) => {
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
     // (A) Get user docs + build a quick chatHistory prompt if needed
-    
+
     let allDocs = await getAllDocuments(userId);
 
     if (allDocs.length === 0) {
@@ -641,19 +709,13 @@ app.post("/chat", async (req, res) => {
       ];
     }
 
-    console.log(allDocs);
+    
 
-
-    let googleResults = "";
-    if (useWebSearch) {
-      googleResults = await queryGoogleSearch(message);
-    }
     const blsData = await queryBLS();
 
     // Build document listing for evidence gathering
     const docListing = allDocs.map((d) => `${d.name} (${d.tag})`).join("\n");
 
-    console.log(docListing);
     const shortHistory = chatHistory
       .filter((m) => m.role === "user")
       .slice(-10)
@@ -701,7 +763,10 @@ app.post("/chat", async (req, res) => {
         "goalSentence": "Your single-sentence restatement of the question here.",
         "questionType": "a",
         "ragQueries": ["term1", "term2"],
-        "docTags": ["tag1", "tag2"]
+        "docTags": ["tag1", "tag2"] (the tag is NOT the title. A tag is, for example: "This data file includes employee engagement metrics related to mental health resources accessed via email communications.")
+
+➕
+")
       }
     `.trim();
 
@@ -716,6 +781,19 @@ app.post("/chat", async (req, res) => {
         ragQueries: [],
         docTags: [],
       };
+    }
+    console.log(parsedFirst);
+
+    let googleResults = "";
+    if (
+      useWebSearch &&
+      parsedFirst.ragQueries &&
+      parsedFirst.ragQueries.length > 0
+    ) {
+      // For example, use the first query
+      const firstTerm = parsedFirst.ragQueries[0];
+      // Or you could combine them with commas, or do multiple searches
+      googleResults = await queryGoogleSearch(firstTerm, message);
     }
 
     // =====================================================
@@ -744,7 +822,7 @@ app.post("/chat", async (req, res) => {
       Documents from My Company:
       ${docSummaries.join("\n\n")}
     `.trim();
-
+    
     // =====================================================
     // STEP 4: SELECT RESPONSE TEMPLATE
     // =====================================================
@@ -939,7 +1017,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       Evidence:
       ${compiledEvidence}
-       ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
+      ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
       At the very end of your response, generate exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
 
@@ -964,8 +1042,7 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
     const finalResponse = await callOpenAI(secondPrompt, 3500);
     let botReply = finalResponse.replace(/```html/g, "").replace(/```/g, "");
-    console.log(finalResponse);
-    console.log(botReply);
+    
     let followUps = [];
     const lastOpenBrace = botReply.lastIndexOf("{");
     const lastCloseBrace = botReply.lastIndexOf("}");
@@ -994,7 +1071,6 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       }
     }
 
-    console.log(followUps);
 
     // =====================================================
     // STEP 4: SUMMARIZE THE EVIDENCE (NEW STEP)
@@ -1006,14 +1082,16 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       Be as specific as possible.
       At the beginning of the response, explain what this evidence summary is for, in first person ("I used [sources] to provide deep research to gather evidence to answer your question").
       At the beginning of each point, use a short phrase as the "title" of that point (on the same line, separated by a colon), so it's easier to read.
-      At the end, include the list of the names of the article sources in valid citation format.
+      At the end, include the list of the names of the article sources in valid citation format, (and for company documents, the name of the document, MAKE SURE YOU INCLUDE THE MY COMPANY DOCUMENTS TOO!! THEY ARE IMPORTANT!).
       Do not return any extra commentary or conclusion.
+
+      Documents from My Company:
+      ${docSummaries}
 
       External/Public Data:
       ${ragData}
       
-      Documents from My Company:
-      ${docSummaries}
+      ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
       Summarized Insights (Return in PLAIN TEXT, no bold font, bullet points only):
     `.trim();
@@ -1312,9 +1390,7 @@ app.post("/notepad/ai", async (req, res) => {
     const { userId, content } = req.body;
 
     if (!userId || !content) {
-      return res
-        .status(400)
-        .json({ error: "Missing userId or note content." });
+      return res.status(400).json({ error: "Missing userId or note content." });
     }
 
     // Example system prompt for the AI
@@ -1339,7 +1415,6 @@ app.post("/notepad/ai", async (req, res) => {
           },
         ],
         max_tokens: 800,
-        
       },
       {
         headers: {
@@ -1357,7 +1432,6 @@ app.post("/notepad/ai", async (req, res) => {
     res.status(500).json({ error: "Failed to generate AI suggestions." });
   }
 });
-
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
