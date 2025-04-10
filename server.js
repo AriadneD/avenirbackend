@@ -370,15 +370,15 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
           {
             role: "user",
             content: `
-              You are an expert in employee benefits and data analytics. Summarize the document using the following user instruction: "${customInstructions}".
+              You are an expert in employee benefits and data analytics. Summarize the most important info from the document using the following user instruction: "${customInstructions}".
 
-              Return a long, content-rich summary in simple HTML format. Use headers and bullet points if appropriate. Be detailed, and focus on conntent, not design.
+               Return a long, content-rich summary in simple HTML format. Use headers and bullet points if appropriate. Be detailed, and focus on conntent, not design.
 
               Text to summarize:\n\n${extractedText}
             `,
           },
         ],
-        max_tokens: 2500,
+        max_tokens: 2000,
       },
       {
         headers: {
@@ -391,7 +391,17 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
     const summary = summaryResponse.data.choices[0]?.message?.content?.trim();
 
     // ======== Final Return ========
-    return res.status(200).json({ tag, summary });
+    const combinedSummary = `
+    <h3>🔍 AI-Generated Summary:</h3>
+    ${summary}
+
+    <hr/>
+
+    <h3>📄 Full Plain Text of Document:</h3>
+    <pre style="white-space: pre-wrap;">${extractedText}</pre>
+    `;
+
+    return res.status(200).json({ tag, summary: combinedSummary });
   } catch (error) {
     console.error("Error processing file:", error);
     return res.status(500).json({ error: "Failed to process file" });
@@ -972,12 +982,9 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       
       Respond in a structured way as follows.
       
-      (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what benefits trends are there", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
-
       1. First, Directly answer the user's question in ONE SENTENCE.
 
       2. Next, Explain and summarize the company data that's relevant to the user's question and come up with some hypothses, for example, "what are the reasons behind these high claims?" --> SDOH factors & HRIS data
-
       Focus on specific, quantitative, statistical insights.
 
       3. Ask the user if they'd like to: (1) see the bigger picture of external data (2) get suggested actions to take
@@ -1198,7 +1205,11 @@ app.post("/bargraph", async (req, res) => {
           : ""
       }
 
-      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
+      ${
+        googleResults
+          ? `Extract relevant data from web search results to graph:\n${googleResults}`
+          : ""
+      }
     `;
 
     // Step 3: Call GPT to generate the bar graph JSON
@@ -1316,7 +1327,11 @@ app.post("/linegraph", async (req, res) => {
           : ""
       }
 
-      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
+      ${
+        googleResults
+          ? `Extract relevant data from web search results to graph:\n${googleResults}`
+          : ""
+      }
     `;
 
     // Step 3: Call GPT to generate the line graph JSON
@@ -1410,7 +1425,11 @@ app.post("/piechart", async (req, res) => {
           : ""
       }
 
-      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
+      ${
+        googleResults
+          ? `Extract relevant data from web search results to graph:\n${googleResults}`
+          : ""
+      }
     `;
 
     // Step 3: Call GPT to generate the pie chart JSON
@@ -1529,7 +1548,11 @@ app.post("/clusterchart", async (req, res) => {
           : ""
       }
 
-      ${googleResults ? `Extract relevant data from web search results to graph:\n${googleResults}` : ""}
+      ${
+        googleResults
+          ? `Extract relevant data from web search results to graph:\n${googleResults}`
+          : ""
+      }
 
       IMPORTANT: Return only valid JSON, with no code blocks or additional text.
     `;
@@ -1566,7 +1589,9 @@ app.post("/clusterchart", async (req, res) => {
 
     // Step 5: Return to front-end
     res.json({
-      reply: graphData.bullets?.join("\n\n") || "Here is the cluster chart you requested!",
+      reply:
+        graphData.bullets?.join("\n\n") ||
+        "Here is the cluster chart you requested!",
       graphData,
     });
   } catch (error) {
