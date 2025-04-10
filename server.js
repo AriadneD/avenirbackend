@@ -31,6 +31,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://avenir-kohl.vercel.app",
   "https://avenirbackend.onrender.com",
+  "https://avenirbackend2.onrender.com",
 ];
 
 app.use(
