@@ -485,7 +485,6 @@ const queryGoogleSearch = async (query, message) => {
     const client = new OpenAI({
       apiKey: process.env.REACT_APP_OPENAI_API_KEY,
     });
-    console.log(query);
     const prompt = `
       You are a senior expert researcher. Perform a web search for the following topics:
       "${query}" and "${message}"
@@ -513,7 +512,6 @@ const queryGoogleSearch = async (query, message) => {
 
     // Just access 'output_text'
     const resultText = response.output_text || "No relevant results found.";
-    console.log(resultText);
     return resultText.trim();
   } catch (error) {
     console.error("OpenAI web search error:", error);
@@ -683,6 +681,71 @@ async function callOpenAI(prompt, maxTokens = 500) {
   return openaiResponse.data.choices[0]?.message?.content || "No response";
 }
 
+async function getRelevantLegislation(state, searchTerms) {
+  const apiKey = process.env.LEGISCAN_API_KEY;
+  const baseUrl = "https://api.legiscan.com/";
+  const results = [];
+  const statesToSearch = [state, "US"]; // You can add more like "US", "CA", "NY"...
+
+  console.log("🔍 Starting masterlist-based search with terms:", searchTerms);
+
+  for (const state of statesToSearch) {
+    try {
+      console.log(`📥 Fetching all bills from state "${state}"`);
+
+      const res = await axios.get(baseUrl, {
+        params: {
+          key: apiKey,
+          op: "getMasterList",
+          state,
+        },
+      });
+
+      const masterList = res.data?.masterlist;
+      if (!masterList || typeof masterList !== "object") {
+        console.warn(`⚠️ No masterlist returned for state "${state}"`);
+        continue;
+      }
+
+      const allBills = Object.values(masterList).filter(
+        (bill) => bill?.bill_id && bill?.title
+      );
+
+      console.log(`📚 ${allBills.length} total bills fetched from "${state}"`);
+
+      const filteredBills = allBills.filter((bill) =>
+        searchTerms.some((term) =>
+          (bill.title + " " + bill.description + " " + bill.summary)
+            .toLowerCase()
+            .includes(term.toLowerCase())
+        )
+      );
+
+      console.log(
+        `✅ Found ${filteredBills.length} relevant bills in "${state}"`
+      );
+
+      for (const bill of filteredBills.slice(0, 10)) {
+        results.push({
+          bill_id: bill.bill_id,
+          bill_number: bill.bill_number,
+          title: bill.title,
+          description: bill.description,
+          summary: bill.summary,
+          state: state,
+          session: bill.session,
+          last_action_date: bill.last_action_date,
+        });
+      }
+    } catch (err) {
+      console.error(`❌ Error fetching from state "${state}":`, err.message);
+    }
+  }
+
+  console.log(`🧾 Total relevant results found: ${results.length}`);
+  return results;
+}
+
 // NOTE: The rest of your server code (endpoints, helper functions, etc.) remains unchanged.
 //       Only the /chat route is replaced with this new version below.
 
@@ -705,7 +768,6 @@ app.post("/chat", async (req, res) => {
     const { companyName, employeeCount, locations, industry } =
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
-    console.log("userdocuments: ", userDocuments);
 
     if (userDocuments.length > 0) {
       const singlePrompt = `
@@ -793,12 +855,11 @@ app.post("/chat", async (req, res) => {
             j) Give me info specifically about my internal company data
             k) Suggest actions / what can I do about this issue?
             l) industry benchmarking / what are other companies similar to me doing? 
-            m) compliance question / are we compliant / understanding compliance / understanding terminology that relates to compliance / laws
+            m) compliance and/or law related question
             y) The question could be about either my company or public data (a-k)
             z) The question is gibberish, doesn’t make sense or it’s off topic
       3. Based on the intent of the question, List 1-3 search terms we should use to query our external database of public information. Or, if you feel that you don't need external data to answer the question, leave it blank.
       4. Based on the intent of the question, From the list of My Company Documents, List ALL of the relevant user documents that could possibly contain information relevant to the question. This is EXTREMELY important, be broad. Return their tag, which is the sentence written in parentheses () after the name. For example ${allDocs[0].tag}
-
       My company documents:
       ${docListing}
 
@@ -807,10 +868,7 @@ app.post("/chat", async (req, res) => {
         "goalSentence": "Your single-sentence restatement of the question here.",
         "questionType": "a",
         "ragQueries": ["term1", "term2"],
-        "docTags": ["tag1", "tag2"] (the tag is NOT the title. A tag is, for example: "This data file includes employee engagement metrics related to mental health resources accessed via email communications.")
-
-➕
-")
+        "docTags": ["tag1", "tag2"], (the tag is NOT the title. A tag is, for example: "This data file includes employee engagement metrics related to mental health resources accessed via email communications.")
       }
     `.trim();
 
@@ -826,29 +884,175 @@ app.post("/chat", async (req, res) => {
         docTags: [],
       };
     }
-    console.log(parsedFirst);
+    console.log(parsedFirst.questionType);
 
+    // =====================================================
+    // STEP 3: GATHER RELEVANT EVIDENCE
+    // =====================================================
+
+    // Google Search Results
     let googleResults = "";
     if (
       useWebSearch &&
       parsedFirst.ragQueries &&
       parsedFirst.ragQueries.length > 0
     ) {
-      // For example, use the first query
       const firstTerm = parsedFirst.ragQueries[0];
-      // Or you could combine them with commas, or do multiple searches
       googleResults = await queryGoogleSearch(firstTerm, message);
     }
 
-    // =====================================================
-    // STEP 3: GATHER RELEVANT EVIDENCE
-    // =====================================================
+    // Legislation Results
+    let legiscanEvidence = "";
+    // Global in-memory cache
+    const legiscanCache = new Map();
+
+
+    if (parsedFirst.questionType === "m") {
+      lawPrompt = `
+      You are an agent with the task of coming up with the most relevant queries to call the LegiScan API. 
+      Your goal is to find the most relevant laws to answer this question: "${message}".
+      I am a head of benefits. If needed here's some additional context about my company so you can find more relevant laws for me: my company has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      
+      First, provide the state which to search.
+      Next, provide queries to search. Queries should be a mixture of simple words and phrases. Only include words/phrases that are likely to come up in the description or title of a bill. 
+      They should not contain state names. 
+      Return 1 state.
+      Return 3 queries.
+      Do not return empty response.
+      
+      Return a JSON response EXACTLY like this, no other formats. Do not return\`\`\`json or any other characters:
+        {
+          "state": "state 1" Always use state two letter abbreviation, e.g. MA",
+          "lawQueries": ["first query", "second query"]
+        }
+      
+      `;
+      const lawResponse = await callOpenAI(lawPrompt, 1000);
+      console.log(lawResponse);
+      let lawResults;
+      try {
+        lawResults = JSON.parse(lawResponse);
+      } catch (error) {
+        lawResults = {
+          state: "",
+          lawQueries: [],
+        };
+      }
+
+      const legiscanResults = await getRelevantLegislation(
+        lawResults.state,
+        lawResults.lawQueries
+      );
+
+      if (legiscanResults.length > 0) {
+        legiscanEvidence =
+          "\n\nLegiScan Bills:\n" +
+          legiscanResults
+            .map(
+              (bill, i) =>
+                `${i + 1}. Bill Title: ${bill.title}
+                Bill ID: ${bill.bill_id}
+                Bill Number: ${bill.bill_number}
+                Bill State: ${bill.state}
+                Bill Description: ${bill.description}
+                Last Action Date: ${bill.last_action_date}
+                URL: ${bill.url || "undefined"}
+                \n\n`
+            )
+            .join("<br /><br />");
+      }
+      console.log("Legiscan: ", legiscanEvidence);
+    }
+
+    async function getRelevantLegislation(state, searchTerms) {
+      const apiKey = process.env.LEGISCAN_API_KEY;
+      const baseUrl = "https://api.legiscan.com/";
+      const results = [];
+      const statesToSearch = [state, "US"]; // Check both state and federal
+
+      const cacheKey = `${state}::${searchTerms.join(",").toLowerCase()}`;
+      if (legiscanCache.has(cacheKey)) {
+        console.log(`⚠️ Using cached LegiScan result for "${cacheKey}"`);
+        return legiscanCache.get(cacheKey);
+      }
+
+      console.log(
+        "🔍 Starting masterlist-based search with terms:",
+        searchTerms
+      );
+
+      for (const state of statesToSearch) {
+        try {
+          console.log(`📥 Fetching all bills from state "${state}"`);
+
+          const res = await axios.get(baseUrl, {
+            params: {
+              key: apiKey,
+              op: "getMasterList",
+              state,
+            },
+          });
+
+          const masterList = res.data?.masterlist;
+          if (!masterList || typeof masterList !== "object") {
+            console.warn(`⚠️ No masterlist returned for state "${state}"`);
+            continue;
+          }
+
+          const allBills = Object.values(masterList).filter(
+            (bill) => bill?.bill_id && bill?.title
+          );
+
+          console.log(
+            `📚 ${allBills.length} total bills fetched from "${state}"`
+          );
+
+          const filteredBills = allBills.filter((bill) =>
+            searchTerms.some((term) =>
+              (bill.title + " " + bill.description + " " + bill.summary)
+                .toLowerCase()
+                .includes(term.toLowerCase())
+            )
+          );
+
+          console.log(
+            `✅ Found ${filteredBills.length} relevant bills in "${state}"`
+          );
+
+          for (const bill of filteredBills.slice(0, 10)) {
+            results.push({
+              bill_id: bill.bill_id,
+              bill_number: bill.bill_number,
+              title: bill.title,
+              description: bill.description,
+              summary: bill.summary,
+              state: state,
+              session: bill.session,
+              last_action_date: bill.last_action_date,
+              url: `https://legiscan.com/${state}/bill/${bill.bill_number}/${bill.session}`, // optional URL construction
+            });
+          }
+        } catch (err) {
+          console.error(
+            `❌ Error fetching from state "${state}":`,
+            err.message
+          );
+        }
+      }
+
+      console.log(`🧾 Total relevant results found: ${results.length}`);
+      legiscanCache.set(cacheKey, results); // ✅ Cache the result
+      return results;
+    }
+
+    // Rag Data
     let ragData = [];
     for (let query of parsedFirst.ragQueries || []) {
       const matches = await performRAGQuery(query);
       ragData.push(`\n=== RAG for [${query}]:\n${matches.join("\n\n")}`);
     }
 
+    // Company documents
     let docSummaries = [];
     for (let tag of parsedFirst.docTags || []) {
       const docData = await getDocumentByTag(userId, tag);
@@ -865,6 +1069,7 @@ app.post("/chat", async (req, res) => {
       
       Documents from My Company:
       ${docSummaries.join("\n\n")}
+
     `.trim();
 
     // =====================================================
@@ -959,8 +1164,6 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       `,
       i: `
-          First, Directly answer the user's question in ONE SENTENCE.
-
           Part 1: Search the external evidence AND these sources to gather evidence, be sure to include source names.
           1. state/federal public health data
           2. legislation/regulatory data
@@ -981,15 +1184,12 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       `,
       j: `
       
-      Respond in a structured way as follows.
-      
-      1. First, Directly answer the user's question in ONE SENTENCE.
-
-      2. Next, Explain and summarize the company data that's relevant to the user's question and come up with some hypothses, for example, "what are the reasons behind these high claims?" --> SDOH factors & HRIS data
+      Look at the company data that's relevant to the user's question
+      It's especially useful if you can tell me what you see between multiple documents, like what are the trends, connections, similarities, differences and insights?
+      It's also helpful to come up with examples, and perform statistical or numerical analyses.
+      Don't just say what's happening, come up with some hypotheses as to why it's happening, and what to do about it.
       Focus on specific, quantitative, statistical insights.
-
-      3. Ask the user if they'd like to: (1) see the bigger picture of external data (2) get suggested actions to take
-
+      
       IMPORTANT: Here are all the user's uploaded documents to analyze for steps 1 & 2:
       ${allDocs}
 
@@ -997,29 +1197,38 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       k: `
       
       Respond in a structured way as follows.
-      
-      (optional) if the question is vague or general (ie: doesn't include location/claim type), confirm the user's goal and suggest further clarification. For example, if they asked "what can I do about my company issues", say "For now, I will answer your question in general, but it would help me if you could give me a specific state or claim type, for example "NC and diabetes"".
-      
-      1. First, Directly answer the user's question in ONE SENTENCE.
 
-      2. Actionable Suggestions: give me (bullets) 5+ actionable suggestions (each should have a priority) and a quantifiable, specific, numerical breakdown of cost savings and ROI estimation with justifications. Actions could include, recommend a vendor, draft an email campaign, design a survey, etc. Get creative.
+      First, tell me what you see: trends, correlations, multi-document insights etc...
+      Then, give Actionable Suggestions: give me (bullets) 5+ actionable suggestions.
+      - Each should have a priority (High, medium, low))
+      - Each should have a quantifiable, specific, numerical breakdown of cost savings and ROI estimation with justifications.
+      - Each should have a short description of what it is.
+      - They should also include estimated implementation timeline & steps. 
+      - Actions could include, recommend a vendor, draft an email campaign, design a survey, etc. Get creative.
 
       IMPORTANT, use the sources below to construct your answer in a tailored specific way to the company's top medical spends.
 
             `,
       l: `
 
-          Imagine you're the CEO of a company similarly sized, located, and industry as mine. (Make sure you mention in the response that you are basing this on companies similar SIZE and INDUSTRY). You are giving me advice. How would you tackle this issue, what strategies would you employ, what are some case studies of success?
-          At the beginning of the response, directly answer my question in 1 sentence.
+          Imagine you're the CEO of a company similarly sized, located, and industry as mine. (Make sure you mention in the response that you are basing this on companies similar SIZE and INDUSTRY). You are giving me advice. 
+          How would you tackle this issue, what strategies would you employ, what are some things companies similarly sized/industry to me have done successfully?
           Your response should be technical, professional, objective, and in 3rd person passive.
 
       `,
       m: `
-        First, directly answer the question in 1 concise sentence.
-        Then, Provide clear, structured guidance that aligns with regulatory requirements while making the information actionable. 
-        Identifying the relevant laws and regulations (e.g., ACA, HIPAA, ERISA, COBRA, or state-specific mandates) that impact their benefits program, with justifications. 
-        Create a concise compliance checklist or gap analysis to help them assess whether their plans meet legal requirements. 
-        If there are potential compliance risks, suggest specific actions to address them, such as updating documentation, adjusting eligibility criteria, or working with legal counsel. 
+        State the most up-to-date laws, regulations, and state-specific mandates that are relevant to answer the user's question. 
+        For each law, list in bullet points the bill name, ID, description, the date it was introduced, the state it applies to, the URL (if applicable), and a justification. 
+        Next, conduct a gap analysis to help them assess whether their plans meet legal requirements. 
+        Finally, If there are potential compliance risks, suggest specific actions to address them.
+
+        ${
+          legiscanEvidence
+            ? `Relevant Laws & Legislation:\n${legiscanEvidence}`
+            : ""
+        }
+        ${googleResults ? `\n${googleResults}` : ""}
+
       `,
       y: `
       
@@ -1041,9 +1250,9 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry. 
       I have asked you this question ${message}
 
-      First, answer my question to the best of your ability. This should be about 30% of your reply.
+      First, answer my question to the best of your ability. This should be about 20% of your reply.
 
-      Next, continue the question's answer by following these instructions, which should take up the remaining 70% of your reply:
+      Next, continue the question's answer by following these instructions, which should take up the remaining 80% of your reply:
 
       ${secondPromptBody}
 
@@ -1057,8 +1266,12 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       - Ensure tables are mobile responsive
 
       Evidence:
-      ${compiledEvidence}
+
       ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
+
+      ${compiledEvidence}
+
+      After that, list the names of each source you used in bullets. This could be internal, external, etc.
 
       At the very end of your response, generate exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
 
@@ -1130,6 +1343,12 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       External/Public Data:
       ${ragData}
+
+      ${
+        legiscanEvidence
+          ? `Relevant Laws & Legislation:\n${legiscanEvidence}`
+          : ""
+      }
       
       ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
@@ -1274,8 +1493,6 @@ app.post("/linegraph", async (req, res) => {
       // Or you could combine them with commas, or do multiple searches
       googleResults = await queryGoogleSearch(message, "statistical trends");
     }
-
-    console.log("Google Results: ", googleResults);
 
     // Step 2: Prepare the GPT prompt to generate a line graph
     const gptPrompt = `
