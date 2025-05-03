@@ -244,6 +244,21 @@ const { fromBuffer } = require("pdf2pic");
 app.post("/summarize", upload.single("file"), async (req, res) => {
   const file = req.file;
   const { pdfAsPPT, title, docType, summaryOption, summaryOther } = req.body;
+  const blurColumns = JSON.parse(req.body.blurColumns || "[]");
+  const dropColumns = JSON.parse(req.body.dropColumns || "[]");
+
+  const anonymizeData = (data) => {
+    return data.map((row) => {
+      const newRow = { ...row };
+      dropColumns.forEach((col) => delete newRow[col]);
+      blurColumns.forEach((col) => {
+        if (newRow[col]) {
+          newRow[col] = Math.random().toString(36).substring(2, 10);
+        }
+      });
+      return newRow;
+    });
+  };
 
   if (!file) {
     return res.status(400).json({ error: "No file uploaded" });
@@ -316,12 +331,30 @@ app.post("/summarize", upload.single("file"), async (req, res) => {
     ) {
       const workbook = xlsx.read(file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      extractedText = xlsx.utils.sheet_to_csv(sheet);
+      let jsonData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+      if (blurColumns.length > 0 || dropColumns.length > 0) {
+        jsonData = anonymizeData(jsonData);
+      }
+
+      extractedText = xlsx.utils.sheet_to_csv(
+        xlsx.utils.json_to_sheet(jsonData)
+      );
     }
     // Process CSV files
     else if (file.mimetype === "text/csv") {
-      extractedText = file.buffer.toString("utf-8");
+      const csvText = file.buffer.toString("utf-8");
+      let jsonData = xlsx.utils.sheet_to_json(
+        xlsx.read(csvText, { type: "string" }).Sheets.Sheet1
+      );
+
+      if (blurColumns.length > 0 || dropColumns.length > 0) {
+        jsonData = anonymizeData(jsonData);
+      }
+
+      extractedText = xlsx.utils.sheet_to_csv(
+        xlsx.utils.json_to_sheet(jsonData)
+      );
     } else {
       return res.status(400).json({ error: "Unsupported file type" });
     }
@@ -490,10 +523,12 @@ const queryGoogleSearch = async (query, message) => {
       "${query}" and "${message}"
 
       Then, list the top 5 relevant online website sources in concise bullet points.
+      Do not include out of date information (older than 3 years), and prioritize newer information (as of today's date).
+
       For each site, please provide:
 
       1. The website name or source
-      2. A brief snippet (1-2 lines) summarizing the main point from that site
+      2. A brief snippet (2-4 sentences) summarizing the points from that site that directly answer the question
 
       Return only plain text, with no extraneous commentary or disclaimers.
     `.trim();
@@ -512,6 +547,7 @@ const queryGoogleSearch = async (query, message) => {
 
     // Just access 'output_text'
     const resultText = response.output_text || "No relevant results found.";
+
     return resultText.trim();
   } catch (error) {
     console.error("OpenAI web search error:", error);
@@ -635,6 +671,7 @@ const getCompanyInfo = async (userId) => {
       employeeCount: companyData.employeeCount || "Unknown Employee Count",
       locations: companyData.locations || [],
       industry: companyData.industry || "Unknown Industry",
+      role: companyData.role || "Employee",
     };
   } catch (error) {
     console.error("Error fetching company info:", error);
@@ -647,7 +684,7 @@ async function performRAGQuery(query) {
     const index = await pinecone.index("benefits-documents");
     const result = await index.query({
       vector: await getOpenAIEmbedding(query),
-      topK: 5,
+      topK: 3,
       includeMetadata: true,
     });
 
@@ -746,8 +783,151 @@ async function getRelevantLegislation(state, searchTerms) {
   return results;
 }
 
-// NOTE: The rest of your server code (endpoints, helper functions, etc.) remains unchanged.
-//       Only the /chat route is replaced with this new version below.
+
+const getRecentMessages = async (userId, limit = 5) => {
+  try {
+    const userChatsRef = db.collection(`users/${userId}/chats`).orderBy("createdAt", "desc");
+    const chatsSnapshot = await userChatsRef.get();
+
+    console.log(chatsSnapshot.size);
+    if (chatsSnapshot.empty) {
+      console.log("Empty Snapshot");
+    }
+
+    if (chatsSnapshot.empty) return [];
+
+    let allUserMessages = [];
+
+    for (const chatDoc of chatsSnapshot.docs) {
+      console.log("Analyzing chat: ", chatDoc);
+      const messagesSnapshot = await chatDoc.ref
+        .collection("messages")
+        .where("sender", "==", "user")
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+
+      const messages = messagesSnapshot.docs.map((doc) => ({
+        content: doc.data().text,
+        createdAt: doc.data().createdAt?.toDate?.() || new Date(0),
+      }));
+
+      console.log("Messages: ", messages);
+
+      allUserMessages.push(...messages);
+
+      // ✅ Stop early if we already have enough
+      if (allUserMessages.length >= limit) break;
+    }
+
+    allUserMessages.sort((a, b) => b.createdAt - a.createdAt);
+    return allUserMessages.slice(0, limit).reverse().map((m) => m.content); // oldest to newest
+  } catch (error) {
+    console.error("Error fetching recent user messages:", error);
+    return [];
+  }
+};
+
+
+
+// seasonal-insights endpoint 
+app.post("/seasonal-insights", async (req, res) => {
+  try {
+    const { userId, role, timelineEvents } = req.body;
+
+    if (!userId || !role || !timelineEvents || timelineEvents.length === 0) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const recentMessages = await getRecentMessages(userId);
+
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const timelineString = timelineEvents
+      .map((e) => `${e.title} on ${e.date}${e.description ? ": " + e.description : ""}`)
+      .join("\n");
+
+    const messagesString = recentMessages.length
+      ? `Recent messages from user:
+${recentMessages.join("\n")}`
+      : "";
+
+    const prompt = `
+Today's date is ${today}, and I am a ${role} at my company. 
+Tell me what I should prioritize and how I can use Avenir AI most effectively? Please return your response in 2–3 sentences. This should be based on:
+- Typical time of year requirements for my job position, ${role}.
+- Key (upcoming) dates I've provided you in my timeline: ${timelineString}.
+- The topics around my 5 most recent chat messages: ${messagesString}
+
+Response structure:
+- 1 welcoming sentence: Today's date is [DATE], and you've been exploring [TOPICS] and [MEETING TYPES]!
+- 1 sentence on priorities: Things you can focus on now are [PRIORITY].
+- Use Avenir AI to [3 SPECIFIC BULLET POINTS]
+- 1 encouraging concluding sentence which compliments the user's positive traits
+
+Format: use correct HTML syntax with <ul><li> tags for the bulleted list.
+Tone: Make it short, concise, and sound like a human wrote it. It should be warm, empathetic, friendly, encouraging, professional.
+
+About Avenir AI: 
+We are a domain-specific AI agent for employee benefits professionals. 
+Our features include an interactive chatbot where you can ask questions and perform actions such as:
+vendor question, write RFP, cost savings estimation, write an email / create an email campaign, make a survey, write a communication / proposal / paper / executive summary, create a risk profile, evaluating a point solution, help me understand external context / bigger picture / other data from external public sources, find information, patterns, or trends about my internal company claims and HRIS data, understand key measurements and metrics, suggest actions / what can I do about this issue, industry benchmarking / what are other companies similar to me doing and ask law.
+    
+Here's an example response:
+
+As a Consultant in May 2025, you’ve been diving into mental health trends, diabetes vendors, and ACA. Your focus now should be prepping for your upcoming vendor and budget meetings.
+
+Use Avenir AI to:
+- Build an RFP tailored to current mental health needs.
+- Estimate and present ROIs for your diabetes point solution budget discussion.
+- Draft a quick summary for stakeholders on key ACA regulatory updates.
+
+You’ve done the hard work: your sharp insights are setting you up to make a real impact.
+
+`.trim();
+
+
+    const openAIResponse = await callOpenAI(prompt, 300);
+    return res.json({ insight: openAIResponse.trim() });
+  } catch (error) {
+    console.error("Error in /seasonal-insights:", error);
+    return res.status(500).json({ error: "Failed to generate seasonal insights" });
+  }
+});
+
+
+
+// Verify that chat is ok
+app.post("/verify-context", async (req, res) => {
+  const { originalQuestion, userReply } = req.body;
+
+  const verificationPrompt = `
+    You are an assistant helping determine if a user reply continues the original topic or changes it.
+
+    Original Question: "${originalQuestion}"
+    User's Latest Reply: "${userReply}"
+
+    If the reply seems like it is answering the original question (giving more detail or clarifying), respond with: {"continuesOriginalTopic": true}
+    If the reply seems like a new, different topic, respond with: {"continuesOriginalTopic": false}
+
+    Only respond in this JSON format. No other text.
+  `.trim();
+
+  try {
+    const openAIResult = await callOpenAI(verificationPrompt, 200);
+    const cleanResult = openAIResult.trim().replace(/```json|```/g, ""); // strip markdown if OpenAI adds
+
+    const parsedResult = JSON.parse(cleanResult);
+    res.json(parsedResult);
+  } catch (error) {
+    console.error("Verification failed:", error);
+    res.json({ continuesOriginalTopic: true }); // Default fallback: Assume continue
+  }
+});
 
 // POST /chat route
 
@@ -756,16 +936,86 @@ app.post("/chat", async (req, res) => {
     // ---------------------------
     // STEP 0: EXTRACT USER INPUTS
     // ---------------------------
-    const { userId, message, chatHistory, useWebSearch, selectedDocs } =
-      req.body;
+    let {
+      userId,
+      message,
+      chatHistory,
+      useWebSearch,
+      selectedDocs,
+      rfpContext,
+    } = req.body;
+    console.log("RFP Context:", rfpContext);
+
     if (!message) {
       return res.status(400).json({ error: "User message is required." });
     }
 
+    // ---------------------------
+    // STEP 0.5: REWORD PROMPT WITH MEMORY + CONTEXT ANCHORING
+    // ---------------------------
+    let lastAssistantMessage = "";
+    let lastUserMessages = "";
+    let memoryPrompt = "";
+
+    if (chatHistory && chatHistory.length > 0) {
+      const lastUserMessages = chatHistory
+        .filter((m) => m.role === "user")
+        .slice(-10)
+        .map((m) => m.content);
+
+      const lastAssistantMessage = chatHistory
+        .filter((m) => m.role === "assistant")
+        .slice(-1)
+        .map((m) => m.content)
+        .join("\n");
+
+      const memoryPrompt = `
+        You are an assistant that rewrites prompts based on past chat history.
+
+        You are given:
+        • The user's current prompt: "${message}"
+        • A history of past user prompts: ${JSON.stringify(lastUserMessages)}
+        • The most recent assistant response: "${lastAssistantMessage}"
+
+        Your task is to rephrase the current prompt to be as clear, detailed, and contextually aligned as possible, following these rules:
+        • Context Anchoring:
+        Use past conversation history to enrich the new prompt ONLY IF the user is continuing the same topic.
+        • A "same topic" continuation is indicated by similar subject matter, terminology, entities, or a logical flow from recent interactions.
+        • If the user has SHIFTED to a new topic (e.g., from "mental health spend" to "ACA laws"), treat the prompt independently without incorporating prior context, DO NOT REPHRASE THE PROMPT, ONLY RETURN THE ORIGINAL MESSAGE.
+        • History Order:
+        Check the most recent messages first when deciding whether the current prompt follows the previous context.
+        • Reformatting:
+        Make the prompt maximally understandable and, if appropriate, add relevant details based on recent history.
+        • Output Constraint:
+        Return only the reworded, reformatted prompt. Do not include explanations or any additional text.
+
+        Example:
+        Original prompt:
+        "put it in an email"
+        New prompt (after reformatting based on past history):
+        "I am a consultant. Our medical spend was identified to be increased by 7%. Write an email to our head of benefits to ask them how to decrease spend."
+
+        Return ONLY the reworded prompt. NO explanations.
+  `.trim();
+
+      try {
+        const rewordedPrompt = await callOpenAI(memoryPrompt, 500);
+        message = rewordedPrompt.trim();
+      } catch (error) {
+        console.error(
+          "⚠️ Error during memory prompt rewrite. Using original message.",
+          error
+        );
+      }
+    }
+
+    console.log(memoryPrompt);
+    console.log(message);
+
     // ============================================================
     // STEP 1: GATHER CONTEXT (USER DOCS + EXTERNAL DATA)
     // ============================================================
-    const { companyName, employeeCount, locations, industry } =
+    const { companyName, employeeCount, locations, industry, role } =
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
 
@@ -828,6 +1078,13 @@ app.post("/chat", async (req, res) => {
       .map((m) => `User: ${m.content}`)
       .join("\n");
 
+    // Get today's date
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
     // =====================================================
     // STEP 2: CLASSIFY THE USER'S GOAL & RELEVANT DATA NEEDS
     // =====================================================
@@ -836,7 +1093,8 @@ app.post("/chat", async (req, res) => {
       I have an extremely important task for you which needs to be in-depth, specific, and actionable. 
       You MUST read the entire prompt and follow the instructions with great precision.
 
-      I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      I am a ${role} at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      Today's date is ${today}.
       I have asked you this question: "${message}".
 
       Your tasks:
@@ -851,15 +1109,22 @@ app.post("/chat", async (req, res) => {
             f) Write a communication / proposal / paper / executive summary
             g) Create a risk profile
             h) Evaluating a point solution
-            i) Give me external info / Understanding benefits trends / bigger picture / other data from external public data
-            j) Give me info specifically about my internal company data
+            i) Help me understand external context / bigger picture / other data from external public sources
+            j) Find information, patterns, or trends about my internal company data
             k) Suggest actions / what can I do about this issue?
             l) industry benchmarking / what are other companies similar to me doing? 
-            m) compliance and/or law related question
-            y) The question could be about either my company or public data (a-k)
+            m) law, policy, mandate, compliance and/or coverage related question
+            n) measurement, metrics, methods
             z) The question is gibberish, doesn’t make sense or it’s off topic
-      3. Based on the intent of the question, List 1-3 search terms we should use to query our external database of public information. Or, if you feel that you don't need external data to answer the question, leave it blank.
-      4. Based on the intent of the question, From the list of My Company Documents, List ALL of the relevant user documents that could possibly contain information relevant to the question. This is EXTREMELY important, be broad. Return their tag, which is the sentence written in parentheses () after the name. For example ${allDocs[0].tag}
+      3. Determine what kind of evidence is needed to provide a complete and well-supported answer that aligns with the user's goal. Choose any combination of:
+          - "internal" (data from the user's company documents)
+          - "external" (industry trends, benchmarks, public health or benefit data)
+          - "legislation" (laws, compliance requirements)
+          - or "none" if no deep research is needed.
+          - Return this list under the key "evidenceTypesNeeded" as a JSON array (e.g., ["internal", "external"]).
+      4. If "external" evidence is required, Based on the intent of the question, List 1-2 search terms we should use to query our external database of public information. Or, if you feel that you don't need external data to answer the question, leave it blank.
+      5. If "internal" evidence is required, Based on the intent of the question, From the list of My Company Documents, List ALL of the relevant user documents that could possibly contain information relevant to the question. This is EXTREMELY important, be broad. Return their tag, which is the sentence written in parentheses () after the name. For example ${allDocs[0].tag}
+
       My company documents:
       ${docListing}
 
@@ -867,9 +1132,140 @@ app.post("/chat", async (req, res) => {
       {
         "goalSentence": "Your single-sentence restatement of the question here.",
         "questionType": "a",
+        "evidenceTypesNeeded": ["internal", "external, "legislation"],
         "ragQueries": ["term1", "term2"],
-        "docTags": ["tag1", "tag2"], (the tag is NOT the title. A tag is, for example: "This data file includes employee engagement metrics related to mental health resources accessed via email communications.")
+        "docTags": ["tag1", "tag2"] (the tag is NOT the title. A tag is, for example: "This data file includes employee engagement metrics related to mental health resources accessed via email communications.")
       }
+
+      Here are some few-shot examples so you know when different requirements are needed:
+
+      Example 1: Vendor Recommendation
+      Prompt: “Can you suggest a few navigation vendors that work well for midsize companies?”
+
+      {
+        "goalSentence": "The user wants vendor recommendations for navigation solutions suitable for midsize companies.",
+        "questionType": "a",
+        "evidenceTypesNeeded": ["external"],
+        "ragQueries": ["care navigation vendors", "navigation vendor reviews"],
+        "docTags": []
+      }
+      Example 2: RFP Generation
+      Prompt: “Write an RFP for a virtual mental health solution that includes scope, evaluation criteria, and timeline.”
+
+      {
+        "goalSentence": "The user wants to generate an RFP document for a virtual mental health solution.",
+        "questionType": "b",
+        "evidenceTypesNeeded": ["none"],
+        "ragQueries": [],
+        "docTags": []
+      }
+
+      Example 3: Company data pattern finding
+      
+      Prompt: "What trends exist among our employee engagement, utilization of resources, and turnover rates, especially in relation to the retention risks previously identified?"
+      {
+        goalSentence: 'The user seeks to analyze trends in employee engagement, resource utilization, and turnover rates in relation to identified retention risks.',
+        questionType: 'j',
+        evidenceTypesNeeded: [ 'internal' ],
+        ragQueries: [
+          'employee engagement trends in tech industry',
+          'turnover rates analysis in software companies'
+        ],
+        docTags: [
+          'Analysis of employee demographics, engagement, benefits utilization, and industry trends within a transitioning workforce.',
+          'Analysis of employee engagement, performance, and growth potential across various roles in an organization.',
+          'Analysis of departmental position vacancies and turnover rates across various functions.'
+        ]
+      }
+
+      Example 4: Formatting Request
+      Prompt: “Can you reword this benefits announcement to sound more upbeat?”
+      {
+        "goalSentence": "The user wants help rewording a benefits announcement with a more upbeat tone.",
+        "questionType": "f",
+        "evidenceTypesNeeded": ["none"],
+        "ragQueries": [],
+        "docTags": []
+      }
+
+      Example 5: Simple Email Draft
+      Prompt: “Can you write a quick email to HR summarizing our DEI survey results?”
+
+      {
+        "goalSentence": "The user wants to draft an email summarizing internal DEI survey results.",
+        "questionType": "d",
+        "evidenceTypesNeeded": ["internal"],
+        "ragQueries": [],
+        "docTags": ["This document contains DEI survey responses collected from employees in Q1."]
+      }
+
+      Example 6: Laws & Compliance
+      Prompt: “Do we need to file anything new under the CAA 2021 transparency rules?”
+
+      {
+        "goalSentence": "The user wants to understand compliance filing requirements under the CAA 2021.",
+        "questionType": "m",
+        "evidenceTypesNeeded": ["legislation", "external"],
+        "ragQueries": [],
+        "docTags": []
+      }
+
+      Example 7: Internal Benchmark
+      Prompt: “Which of our departments uses the wellness stipend the most?”
+
+      {
+        "goalSentence": "The user wants to analyze internal utilization of wellness stipends by department.",
+        "questionType": "j",
+        "evidenceTypesNeeded": ["internal"],
+        "ragQueries": [],
+        "docTags": ["This dashboard tracks wellness stipend claims across departments and months."]
+      }
+
+      Example 8: Simple Survey Creation
+      Prompt: “Create a quick 5-question pulse survey to ask employees about their wellness habits.”
+
+      {
+        "goalSentence": "The user wants to create a short survey to assess employee wellness habits.",
+        "questionType": "e",
+        "evidenceTypesNeeded": ["none"],
+        "ragQueries": [],
+        "docTags": []
+      }
+
+      Example 9: Industry Benchmarking
+      Prompt: “What kinds of fertility benefits are most common among companies like us?”
+
+      {
+        "goalSentence": "The user wants to understand how common fertility benefits are among similar companies.",
+        "questionType": "l",
+        "evidenceTypesNeeded": ["external"],
+        "ragQueries": ["fertility benefit adoption by employer size", "2025 benefits trends for tech industry"],
+        "docTags": []
+      }
+
+      Example 10: Terminology Explanation
+      Prompt: “What’s the difference between an HSA and an FSA?”
+
+      {
+        "goalSentence": "The user wants a general explanation of the differences between HSA and FSA accounts.",
+        "questionType": "i",
+        "evidenceTypesNeeded": ["none"],
+        "ragQueries": [],
+        "docTags": []
+      }
+
+     Example 11: Company Claims Trends
+     Prompt: "What are the trends in our company medical claims?"
+      {
+        goalSentence: "The user wants to analyze trends in their company's medical claims.",
+        questionType: 'j',
+        evidenceTypesNeeded: [ 'internal' ],
+        ragQueries: [],
+        docTags: [
+          'Analysis of healthcare claims by medical providers, detailing pregnancy, diabetes, cancer, metabolic, and musculoskeletal issues across various states.'
+        ]
+      }
+
     `.trim();
 
     const classificationResponse = await callOpenAI(firstPrompt, 1000);
@@ -879,40 +1275,74 @@ app.post("/chat", async (req, res) => {
     } catch (error) {
       parsedFirst = {
         goalSentence: "Unknown goal.",
+        evidenceTypesNeeded: [],
         questionType: "j",
         ragQueries: [],
         docTags: [],
       };
     }
-    console.log(parsedFirst.questionType);
+    console.log(parsedFirst);
 
     // =====================================================
-    // STEP 3: GATHER RELEVANT EVIDENCE
+    // STEP 3: GATHER RELEVANT EVIDENCE (CONDITIONALLY)
     // =====================================================
 
-    // Google Search Results
-    let googleResults = "";
+    const evidenceTypes = parsedFirst.evidenceTypesNeeded || [];
+
+    const needsInternal = evidenceTypes.includes("internal");
+    const needsExternal = evidenceTypes.includes("external");
+    const needsLegislation = evidenceTypes.includes("legislation");
+
+    const skipAllEvidence = evidenceTypes.length === 0;
+
+    // Check if RFP Context
+
     if (
-      useWebSearch &&
+      parsedFirst.questionType === "b" &&
+      (!rfpContext || rfpContext.trim() === "")
+    ) {
+      console.log("🛑 Skipping RFP generation: RFP context is empty.");
+      return res.json({
+        questionType: "b",
+        reply:
+          "You selected an RFP task, but no RFP context was provided. Please tell us more details.",
+        evidence: null,
+        followUps: [],
+      });
+    }
+
+    // Initialize holders
+    let googleResults = "";
+    let legiscanEvidence = "";
+    let ragData = [];
+    let docSummaries = [];
+
+    // ========= EXTERNAL EVIDENCE (RAG + GOOGLE) =========
+    if (
+      needsExternal &&
       parsedFirst.ragQueries &&
       parsedFirst.ragQueries.length > 0
     ) {
-      const firstTerm = parsedFirst.ragQueries[0];
-      googleResults = await queryGoogleSearch(firstTerm, message);
+      for (let query of parsedFirst.ragQueries) {
+        const matches = await performRAGQuery(query);
+        ragData.push(`\n=== RAG for [${query}]:\n${matches.join("\n\n")}`);
+      }
+
+      if (useWebSearch) {
+        const firstTerm = parsedFirst.ragQueries[0];
+        googleResults = await queryGoogleSearch(firstTerm, message);
+      }
     }
 
-    // Legislation Results
-    let legiscanEvidence = "";
-    // Global in-memory cache
+    // ========= LEGISLATIVE EVIDENCE (LEGISCAN) =========
     const legiscanCache = new Map();
-
-
-    if (parsedFirst.questionType === "m") {
-      lawPrompt = `
+    if (needsLegislation) {
+      const lawPrompt = `
       You are an agent with the task of coming up with the most relevant queries to call the LegiScan API. 
       Your goal is to find the most relevant laws to answer this question: "${message}".
-      I am a head of benefits. If needed here's some additional context about my company so you can find more relevant laws for me: my company has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
-      
+      I am a ${role}. If needed here's some additional context about my company so you can find more relevant laws for me: my company has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      Today's date is ${today}.
+
       First, provide the state which to search.
       Next, provide queries to search. Queries should be a mixture of simple words and phrases. Only include words/phrases that are likely to come up in the description or title of a bill. 
       They should not contain state names. 
@@ -920,23 +1350,21 @@ app.post("/chat", async (req, res) => {
       Return 3 queries.
       Do not return empty response.
       
-      Return a JSON response EXACTLY like this, no other formats. Do not return\`\`\`json or any other characters:
+      Return a JSON response EXACTLY like this, no other formats. Do not return\\\json or any other characters:
         {
           "state": "state 1" Always use state two letter abbreviation, e.g. MA",
           "lawQueries": ["first query", "second query"]
         }
       
-      `;
+      
+  `.trim();
+
       const lawResponse = await callOpenAI(lawPrompt, 1000);
-      console.log(lawResponse);
       let lawResults;
       try {
         lawResults = JSON.parse(lawResponse);
-      } catch (error) {
-        lawResults = {
-          state: "",
-          lawQueries: [],
-        };
+      } catch {
+        lawResults = { state: "", lawQueries: [] };
       }
 
       const legiscanResults = await getRelevantLegislation(
@@ -951,126 +1379,53 @@ app.post("/chat", async (req, res) => {
             .map(
               (bill, i) =>
                 `${i + 1}. Bill Title: ${bill.title}
-                Bill ID: ${bill.bill_id}
-                Bill Number: ${bill.bill_number}
-                Bill State: ${bill.state}
-                Bill Description: ${bill.description}
-                Last Action Date: ${bill.last_action_date}
-                URL: ${bill.url || "undefined"}
-                \n\n`
+            Bill ID: ${bill.bill_id}
+            Bill Number: ${bill.bill_number}
+            Bill State: ${bill.state}
+            Bill Description: ${bill.description}
+            Last Action Date: ${bill.last_action_date}
+            URL: ${bill.url || "undefined"}
+            \n\n`
             )
             .join("<br /><br />");
       }
-      console.log("Legiscan: ", legiscanEvidence);
     }
 
-    async function getRelevantLegislation(state, searchTerms) {
-      const apiKey = process.env.LEGISCAN_API_KEY;
-      const baseUrl = "https://api.legiscan.com/";
-      const results = [];
-      const statesToSearch = [state, "US"]; // Check both state and federal
-
-      const cacheKey = `${state}::${searchTerms.join(",").toLowerCase()}`;
-      if (legiscanCache.has(cacheKey)) {
-        console.log(`⚠️ Using cached LegiScan result for "${cacheKey}"`);
-        return legiscanCache.get(cacheKey);
-      }
-
-      console.log(
-        "🔍 Starting masterlist-based search with terms:",
-        searchTerms
-      );
-
-      for (const state of statesToSearch) {
-        try {
-          console.log(`📥 Fetching all bills from state "${state}"`);
-
-          const res = await axios.get(baseUrl, {
-            params: {
-              key: apiKey,
-              op: "getMasterList",
-              state,
-            },
-          });
-
-          const masterList = res.data?.masterlist;
-          if (!masterList || typeof masterList !== "object") {
-            console.warn(`⚠️ No masterlist returned for state "${state}"`);
-            continue;
-          }
-
-          const allBills = Object.values(masterList).filter(
-            (bill) => bill?.bill_id && bill?.title
-          );
-
-          console.log(
-            `📚 ${allBills.length} total bills fetched from "${state}"`
-          );
-
-          const filteredBills = allBills.filter((bill) =>
-            searchTerms.some((term) =>
-              (bill.title + " " + bill.description + " " + bill.summary)
-                .toLowerCase()
-                .includes(term.toLowerCase())
-            )
-          );
-
-          console.log(
-            `✅ Found ${filteredBills.length} relevant bills in "${state}"`
-          );
-
-          for (const bill of filteredBills.slice(0, 10)) {
-            results.push({
-              bill_id: bill.bill_id,
-              bill_number: bill.bill_number,
-              title: bill.title,
-              description: bill.description,
-              summary: bill.summary,
-              state: state,
-              session: bill.session,
-              last_action_date: bill.last_action_date,
-              url: `https://legiscan.com/${state}/bill/${bill.bill_number}/${bill.session}`, // optional URL construction
-            });
-          }
-        } catch (err) {
-          console.error(
-            `❌ Error fetching from state "${state}":`,
-            err.message
+    // ========= INTERNAL DOCUMENT EVIDENCE =========
+    if (
+      needsInternal &&
+      parsedFirst.docTags &&
+      parsedFirst.docTags.length > 0
+    ) {
+      for (let tag of parsedFirst.docTags) {
+        const docData = await getDocumentByTag(userId, tag);
+        if (docData) {
+          docSummaries.push(
+            `DOC NAME: ${docData.name}\nSUMMARY: ${docData.summary}`
           );
         }
       }
-
-      console.log(`🧾 Total relevant results found: ${results.length}`);
-      legiscanCache.set(cacheKey, results); // ✅ Cache the result
-      return results;
     }
 
-    // Rag Data
-    let ragData = [];
-    for (let query of parsedFirst.ragQueries || []) {
-      const matches = await performRAGQuery(query);
-      ragData.push(`\n=== RAG for [${query}]:\n${matches.join("\n\n")}`);
+    // ========= EVIDENCE COMPILATION =========
+    let compiledEvidence = "";
+    if (needsExternal && ragData.length > 0) {
+      compiledEvidence += `External/Public Data:\n${ragData.join("\n\n")}\n\n`;
+      if (googleResults)
+        compiledEvidence += `Google Search Results:\n${googleResults}\n\n`;
     }
 
-    // Company documents
-    let docSummaries = [];
-    for (let tag of parsedFirst.docTags || []) {
-      const docData = await getDocumentByTag(userId, tag);
-      if (docData) {
-        docSummaries.push(
-          `DOC NAME: ${docData.name}\nSUMMARY: ${docData.summary}`
-        );
-      }
+    if (needsInternal && docSummaries.length > 0) {
+      compiledEvidence += `Documents from My Company:\n${docSummaries.join(
+        "\n\n"
+      )}\n\n`;
     }
 
-    const compiledEvidence = `
-      External/Public Data:
-      ${ragData.join("\n\n")}
-      
-      Documents from My Company:
-      ${docSummaries.join("\n\n")}
+    if (needsLegislation && legiscanEvidence) {
+      compiledEvidence += `Relevant Laws & Legislation:\n${legiscanEvidence}\n\n`;
+    }
 
-    `.trim();
+    console.log(compiledEvidence);
 
     // =====================================================
     // STEP 4: SELECT RESPONSE TEMPLATE
@@ -1086,11 +1441,37 @@ app.post("/chat", async (req, res) => {
           After the table, create a matrix of categories to score the vendors, then assign a final score with justification, and highlight the top vendor.
       `,
       b: `
+          First, ignore the message that the user sent. Instead, read & follow these instructions to get the context for what I want you to do:
+          ${rfpContext}
 
-          Generate a Request for Proposals (RFP) to get more point solutions 
-          which includes the following sections: 
-          (Introduction, Scope of Work, Vendor Requirements, Proposal Guidelines, Evaluation Criteria, Timeline).
+          Next, decide what type of response is best: (1) Full RFP (2) Specific Section of an RFP, ie: scope of work (3) Set of RFP Questions for Vendors (4) RFP Response
+          
+          (1) If it's a full RFP, imagine you are a head of benefits issuing this RFP, be as detailed as possible and write up the following sections:
+            - Introduction
+            - Scope of Work
+            - Vendor Requirements
+            - Proposal Guidelines
+            - Evaluation Criteria
+            - Timeline
 
+          (2) If it's a section of an RFP, imagine you are a head of benefits issuing this RFP, be as detailed as possible and write up the full section they specified.
+
+          (3) If it's a set of questions, imagine you are a head of benefits issuing this RFP, be detailed as possible and come up with 10+ questions from these categories: 
+            - Company Overview	Years in business, funding status, major clients
+            - Solution Fit	Core features, customizations, integrations
+            - Implementation	Timeline, project management, training
+            - Support & SLA	Support hours, escalation paths
+            - Security & Compliance	Certifications, data encryption practices
+            - Pricing	Detailed breakdown of all costs
+            - Roadmap	Planned future enhancements
+            - References	Case studies or client references
+
+          (4) If it's an RFP response, imagine you are a consultant, and the goal is to make it extremely easy for the buyer to say yes to you. Adhere to the following guidelines:
+            - Follow every instruction exactly
+            - Write like you understand them better than the competition
+            - Make your strengths quantifiable and obvious
+            - Keep it clean, crisp, and easy to read
+            - End on a positive, confident tone (you want them excited to work with you)
       `,
       c: `
           
@@ -1112,17 +1493,6 @@ app.post("/chat", async (req, res) => {
       f: `
 
           Generate a detailed communication that serves the goal of the situation above.
-
-          You can leverage these sources as needed:
-          1. state/federal public health data
-          2. legislation/regulatory data
-          3. benefits trends
-          4. bureau of labor statistics
-
-          You could choose to include, as needed:
-          Opportunities for Cost Savings & Efficiency
-          Recommendations
-          Next Steps & Implementation Timeline
 
       `,
       g: `
@@ -1164,34 +1534,52 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
       `,
       i: `
-          Part 1: Search the external evidence AND these sources to gather evidence, be sure to include source names.
-          1. state/federal public health data
-          2. legislation/regulatory data
-          3. benefits trends
-          4. bureau of labor statistics
-          5. Industry benchmark data
+          First, do Data mining: Search the external sources to gather evidence and answer my question.
 
-          Part 2: Using your best judgement, what strategies are similar companies to me doing successfully? (anonymize the names for confidentiality)
-          
-          Part 3: Cross reference my company's internal medical spend trends/data with external data findings to find correlations and surprisingly nuanced insights. USE MY INTERNAL COMPANY DATA! SPECIFICALLY REFERENCE IT.
+          1. Context & Landscape:
+            What is the current state of this topic? Include relevant macro trends, industry benchmarks, recent regulations, and any historical context that shapes how we should think about this today.
 
-          Part 4: Hypotheses
+          2. Implications for Employers:
+            What does this mean for employers like us? Speak directly to implications on cost, compliance, equity, benefit design, employee satisfaction, or risk. Be as specific as possible.
 
-          Focus on SPECIFIC, NUMERICAL, quantitative, statistical insights. Source information from a variety of REAL sources, especially government, corporate, and health sites (ie: NIH, SHRM, BOL... etc). DO NOT MAKE UP FACTUAL INFORMATION!
+          3. Examples & Comparisons:
+            Share relevant case studies, examples, or analogies (real ones, not made up). Compare across industries or regions when useful. Highlight both successes and common pitfalls.
 
+          4. Forward-Looking Recommendations:
+            What should we be doing now or preparing for in the next 6–18 months? Offer bold but reasonable suggestions—policy design ideas, areas to monitor, or decisions to start planning for.
 
-          It is important that you provide 10+ bullet points of information, and focus on the most helpful, specific, nuanced, intellectual insights. 
+        Make your tone strategic and data-driven, like you're advising a senior HR or finance leader. Avoid generic phrasing or filler. Support claims with evidence or citations when available.
+
       `,
       j: `
       
-      Look at the company data that's relevant to the user's question
-      It's especially useful if you can tell me what you see between multiple documents, like what are the trends, connections, similarities, differences and insights?
-      It's also helpful to come up with examples, and perform statistical or numerical analyses.
-      Don't just say what's happening, come up with some hypotheses as to why it's happening, and what to do about it.
-      Focus on specific, quantitative, statistical insights.
-      
-      IMPORTANT: Here are all the user's uploaded documents to analyze for steps 1 & 2:
-      ${allDocs}
+      You are a senior analyst reviewing internal company documents to answer a complex question about employee engagement, resource utilization, and turnover.
+
+Your task is to deliver a **deep, multi-document analytical narrative** with specific, quantitative insights.
+
+Follow these steps:
+
+
+1. Data Mining: Examine all relevant company documents to identify metrics related to the question.
+   - Extract specific statistics (percentages, rates, counts, benchmarks).
+   - Note differences and similarities (e.g., departments, roles, employee segments)
+
+2. Pattern Detection: Identify cross-document trends and relationships.
+   - Where do high X and low Y overlap? Or high X and high Y overlap?
+   - Are there correlations between external drivers and internal data?
+   - Use concrete examples: "In Document A, Sales had a 14% turnover rate and also the lowest engagement score."
+
+3. Causal Hypotheses: Explain why you think the trends exist.
+   - Offer at least 2 hypotheses with reasoning based on the data.
+   - Include confounders, if applicable (e.g., tenure, department size, benefits access).
+
+4. Recommendations:
+   - Based on the findings, suggest 3+ specific actions.
+   - Each action should be linked to the evidence and include expected impact (e.g., “Implement mentorship in R&D: may reduce turnover by 12%”).
+   
+    Tone: Professional, logical, fluent. Avoid generalities. Use real metrics when available.
+    Start with a short narrative paragraph summarizing the big picture.
+
 
             `,
       k: `
@@ -1199,12 +1587,15 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       Respond in a structured way as follows.
 
       First, tell me what you see: trends, correlations, multi-document insights etc...
-      Then, give Actionable Suggestions: give me (bullets) 5+ actionable suggestions.
+      Then, give Actionable Suggestions: give me (bullets) of 4 actionable suggestions.
       - Each should have a priority (High, medium, low))
       - Each should have a quantifiable, specific, numerical breakdown of cost savings and ROI estimation with justifications.
       - Each should have a short description of what it is.
-      - They should also include estimated implementation timeline & steps. 
+      - They should also include estimated implementation timeline & steps.
+      - Also, they should be ranked by feasibility of implementation. 
       - Actions could include, recommend a vendor, draft an email campaign, design a survey, etc. Get creative.
+      
+      - At the end, you must include real financial modeling equations & variable breakdowns with specific input variables of how you calculated cost savings and ROI.
 
       IMPORTANT, use the sources below to construct your answer in a tailored specific way to the company's top medical spends.
 
@@ -1219,7 +1610,9 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       m: `
         State the most up-to-date laws, regulations, and state-specific mandates that are relevant to answer the user's question. 
         For each law, list in bullet points the bill name, ID, description, the date it was introduced, the state it applies to, the URL (if applicable), and a justification. 
+        Order the laws starting from the most recent one, as of today's date.
         Next, conduct a gap analysis to help them assess whether their plans meet legal requirements. 
+        After that, make sure you list any relevant required filings & forms.
         Finally, If there are potential compliance risks, suggest specific actions to address them.
 
         ${
@@ -1230,11 +1623,12 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
         ${googleResults ? `\n${googleResults}` : ""}
 
       `,
-      y: `
-      
-            This question seems not to specify whether the question is about my company or about external context.
-            Please ask the user for clarify whether they want the question to be answered for the company data or external, to start.
-            `,
+      n: `
+        1. List the methods/metrics/measures relevant to my question
+        2. Critique the methods you have listed
+        3. Adoption plan for new ones
+        4. 2-3 actions to take / next steps, ranked by feasibility
+      `,
       z: `
 
       This question doesn’t make sense or is off topic. 
@@ -1247,33 +1641,43 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
 
     const secondPrompt = `
       You are an expert in employee benefits. 
-      I am a head of benefits and wellbeing at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry. 
-      I have asked you this question ${message}
+      I am a ${role} at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+      Today's date is ${today}.
+      I have asked you this question: "${message}".
 
-      First, answer my question to the best of your ability. This should be about 20% of your reply.
+      First, Directly amswer my question qiestopm  (Brief & Specific): In 2–3 sentences, answer my question directly with confidence and clarity. This should be about 20% of your reply.
 
       Next, continue the question's answer by following these instructions, which should take up the remaining 80% of your reply:
 
       ${secondPromptBody}
 
       Response format:
+      - For each claim you make, be sure to back it up with a source. Use Vancouver style citations (In Vancouver style: Citations are numbered sequentially in the text using square brackets like [1]. The reference list is numbered in the same order and usually appears at the end under “References.”)
+      - Do not include out of date information (older than 2 years), and prioritize newer information (as of today's date).
       - Provide your response in valid HTML syntax ONLY!! Only use valid tags & formatting <>, other than that, use plain text.
       - Do not include the characters \
       - Use FontAwesome icons for visual structuring.
       - use <h4> for headings and <p> for regular text, don't make titles too big.
       - You can color text headings and icons with #007bff and #6a11cb.
       - Long, detailed answers are preferred over vague bullets.
-      - Ensure tables are mobile responsive
+      - Ensure tables are mobile responsive, and have grid lines.
 
-      Evidence:
+      ${compiledEvidence ? `Evidence:\n${compiledEvidence}` : ""}
+      
+      ${
+        lastAssistantMessage
+          ? `Here is the previous response provided by the assistant:\n"${lastAssistantMessage}"`
+          : ""
+      }
 
-      ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
+      After that, list the names of each reference you used (internal, external, etc.) in Vancouver style bullets. If the source has a URL, provide it and make sure it's a clickable link, but if there is no URL, do not provide one. 
 
-      ${compiledEvidence}
-
-      After that, list the names of each source you used in bullets. This could be internal, external, etc.
-
-      At the very end of your response, generate exactly two follow-up questions** in the JSON format provided below. These questions must be highly detailed, relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Make a survey, Executive summary, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.), and they must be directed at the bot, NOT the user.
+      At the very end of your response, generate exactly two follow-up questions in the JSON format provided below (do not include a heading).
+      These questions must be:
+      - a logical next step that predicts what the user might ask next
+      - highly detailed
+      - relevant to the types of inquiries we can answer (Vendor selection, RFP question, Cost savings estimation, Write an email, Write a communication, Make a survey, Create a risk profile, Evaluating a point solution, Understanding benefits trends, etc.)
+      - they must be directed at the bot, NOT the user
 
       IMPORTANT: Your follow up questions must only contain valid JSON. Do not include any other text, explanations, or symbols.
 
@@ -1325,45 +1729,47 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       }
     }
 
-    // =====================================================
-    // STEP 4: SUMMARIZE THE EVIDENCE (NEW STEP)
-    // =====================================================
-    const summaryPrompt = `
-      Summarize the following content in the style of a benefits consultant in employee benefits & public health.
-      Use a formal, structured, and precise tone, suitable for inclusion in a research paper.
-      Include quantitative (numerical, statistical) insights as well as qualitative ones.
-      Be as specific as possible.
-      At the beginning of the response, explain what this evidence summary is for, in first person ("I used [sources] to provide deep research to gather evidence to answer your question").
-      At the beginning of each point, use a short phrase as the "title" of that point (on the same line, separated by a colon), so it's easier to read.
-      At the end, include the list of the names of the article sources in valid citation format, (and for company documents, the name of the document, MAKE SURE YOU INCLUDE THE MY COMPANY DOCUMENTS TOO!! THEY ARE IMPORTANT!).
-      Do not return any extra commentary or conclusion.
+    let summarizedCompiledEvidence =
+      "No additional deep research evidence was required for this response.";
 
-      Documents from My Company:
-      ${docSummaries}
+    // Only summarize if there is meaningful evidence
+    if (compiledEvidence.trim().length > 0) {
+      const summaryPrompt = `
+          Summarize the following content in the style of a benefits consultant in employee benefits & public health.
+          Use a formal, structured, and precise tone, suitable for inclusion in a research paper.
+          Include quantitative (numerical, statistical) insights as well as qualitative ones.
+          Be as specific as possible.
+          At the beginning of the response, explain what this evidence summary is for, in first person ("I used [sources] to provide deep research to gather evidence to answer your question").
+          At the beginning of each point, use a short phrase as the "title" of that point (on the same line, separated by a colon), so it's easier to read. At the end of each point, use Vancouver citations (brackets with numbers like "[1]" that correspond to reference numbers in the list of sources at the end)
+          At the end, include the list of the names of the article sources in valid Vancouver Citation format, (and for company documents, the name of the document, MAKE SURE YOU INCLUDE THE MY COMPANY DOCUMENTS TOO!! THEY ARE IMPORTANT!).
+          Do not return any extra commentary or conclusion.
 
-      External/Public Data:
-      ${ragData}
+          ${docSummaries ? ` Documents from My Company: \n${docSummaries}` : ""}
 
-      ${
-        legiscanEvidence
-          ? `Relevant Laws & Legislation:\n${legiscanEvidence}`
-          : ""
-      }
-      
-      ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
+          ${ragData ? ` External Data: \n${ragData}` : ""}
+          
+          ${googleResults ? `Google Search Results:\n${googleResults}` : ""}
 
-      Summarized Insights (Return in PLAIN TEXT, no bold font, bullet points only):
-    `.trim();
+          ${
+            legiscanEvidence
+              ? `Relevant Laws & Legislation:\n${legiscanEvidence}`
+              : ""
+          }
 
-    const summarizedResponse = await callOpenAI(summaryPrompt, 1000);
-    const summarizedCompiledEvidence = summarizedResponse
-      .replace(/```/g, "")
-      .trim();
+          Summarized Insights (Return in PLAIN TEXT, no bold font, bullet points only):
+  `.trim();
 
+      const summarizedResponse = await callOpenAI(summaryPrompt, 1000);
+      summarizedCompiledEvidence = summarizedResponse
+        .replace(/```/g, "")
+        .trim();
+    }
+
+    // Final response
     return res.json({
       questionType: parsedFirst.questionType,
       reply: botReply,
-      evidence: summarizedCompiledEvidence, // Include compiled evidence separately
+      evidence: summarizedCompiledEvidence,
       followUps,
     });
   } catch (error) {
