@@ -1018,12 +1018,20 @@ app.post("/chat", async (req, res) => {
     const { companyName, employeeCount, locations, industry, role } =
       await getCompanyInfo(userId);
     const userDocuments = await getSelectedDocuments(userId, selectedDocs);
+    
+    // Get today's date
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
 
     if (userDocuments.length > 0) {
       const singlePrompt = `
-        You are a senior expert in employee benefits.
-        Your user is an employee benefits professional at a company. They are non technical.
-        They have provided a document for you to analyze. Answer this question based on the document: "${message}"
+        You are a senior expert.
+        I am a ${role} at my company "${companyName}" which has ${employeeCount} employees, operates in ${locations}, and operates in ${industry} industry.
+        Today's date is ${today}.
+        I have provided you a document, please answer my question: "${message}".
 
         Tone: 
         Be specific, factual, and useful. 
@@ -1033,7 +1041,10 @@ app.post("/chat", async (req, res) => {
         Avoid saying "Please find below the requested HTML format response" or anything like that.
         
         Output structure: 
-        Respond in simple HTML format, use bullets when possible.
+        - Respond in valid HTML format, use bullets when possible.
+        - Use FontAwesome icons for visual structuring.
+        - use <h4> for headings and <p> for regular text, don't make titles too big.
+        - You can color text headings and icons with #007bff and #6a11cb.
 
         Here is the document to analyze:
         ${userDocuments}
@@ -1077,13 +1088,6 @@ app.post("/chat", async (req, res) => {
       .slice(-10)
       .map((m) => `User: ${m.content}`)
       .join("\n");
-
-    // Get today's date
-    const today = new Date().toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
 
     // =====================================================
     // STEP 2: CLASSIFY THE USER'S GOAL & RELEVANT DATA NEEDS
@@ -1553,12 +1557,11 @@ Construct a structured point solution evaluation report as follows (PLEASE ONLY 
       `,
       j: `
       
-      You are a senior analyst reviewing internal company documents to answer a complex question about employee engagement, resource utilization, and turnover.
+      You are a senior analyst reviewing internal company documents to answer a complex question.
 
 Your task is to deliver a **deep, multi-document analytical narrative** with specific, quantitative insights.
 
 Follow these steps:
-
 
 1. Data Mining: Examine all relevant company documents to identify metrics related to the question.
    - Extract specific statistics (percentages, rates, counts, benchmarks).
@@ -1567,7 +1570,7 @@ Follow these steps:
 2. Pattern Detection: Identify cross-document trends and relationships.
    - Where do high X and low Y overlap? Or high X and high Y overlap?
    - Are there correlations between external drivers and internal data?
-   - Use concrete examples: "In Document A, Sales had a 14% turnover rate and also the lowest engagement score."
+   - Use concrete examples: "e.g., if the question is about turnover: In Document A, Sales had a 14% turnover rate and also the lowest engagement score."
 
 3. Causal Hypotheses: Explain why you think the trends exist.
    - Offer at least 2 hypotheses with reasoning based on the data.
@@ -1579,6 +1582,7 @@ Follow these steps:
    
     Tone: Professional, logical, fluent. Avoid generalities. Use real metrics when available.
     Start with a short narrative paragraph summarizing the big picture.
+    Important: Do not make up information. Only extract insights if they exist.
 
 
             `,
